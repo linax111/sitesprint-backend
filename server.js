@@ -224,3 +224,7 @@ const PORT = process.env.PORT || 3001;
 initDB().then(() => {
   app.listen(PORT, () => console.log(`🚀 Premium Engine running on port ${PORT}`));
 });
+app.post("/api/build-site", (req, res) => {
+  req.params = { id: req.body.id };
+  res.redirect(307, `/api/generate/${req.body.id}`);
+});
