@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const Anthropic = require("@anthropic-ai/sdk"); // اضافه شدن پکیج رسمی
 
 const app  = express();
 const pool = new Pool({
@@ -12,11 +11,6 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
-
-// راه‌اندازی SDK کلاود با کلید شما
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY,
-});
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -48,26 +42,6 @@ async function initDB() {
     );
   `);
   console.log("✅ DB ready");
-}
-
-// ─── AI CALL (کاملاً با SDK رسمی بازنویسی شد) ──────────────────────────────────
-async function callAI(prompt, maxTokens = 1400) {
-  try {
-    const msg = await anthropic.messages.create({
-      model: "claude-3-5-haiku-latest",
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    if (!msg.content || msg.content.length === 0) {
-      throw new Error("No content received from Anthropic");
-    }
-
-    return msg.content[0].text;
-  } catch (error) {
-    console.error("🔴 Anthropic SDK Error:", error);
-    throw error;
-  }
 }
 
 // ─── SITE GENERATOR ───────────────────────────────────────────────────────────
@@ -128,7 +102,7 @@ function generateHTML(biz) {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${name} — Charlotte, NC</title>
+<title>${name} — ${address}</title>
 <link href="https://fonts.googleapis.com/css2?family=${theme.f1.replace(/\+/g," ")}:wght@400;700;800&family=${theme.f2.replace(/\+/g," ")}:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -187,9 +161,9 @@ footer{border-top:1px solid rgba(255,255,255,.07);padding:1.8rem 5%;text-align:c
   <a href="#contact" class="ncta">Get a Quote</a>
 </nav>
 <div class="hero">
-  <div class="htag">⚡ ${cat} &nbsp;·&nbsp; Charlotte, NC</div>
+  <div class="htag">⚡ ${cat} &nbsp;·&nbsp; ${address}</div>
   <h1>${theme.tagline}</h1>
-  <p class="hsub">${name} — rated ${rating}★ by ${reviews}+ happy customers in Charlotte.</p>
+  <p class="hsub">${name} — rated ${rating}★ by ${reviews}+ happy customers.</p>
   <div class="hbtns">
     <a href="#contact" class="ba">Book Now</a>
     <a href="tel:${phone}" class="bb">📞 ${phone || "Call Us"}</a>
@@ -208,7 +182,7 @@ footer{border-top:1px solid rgba(255,255,255,.07);padding:1.8rem 5%;text-align:c
 <div class="rb">
   <div class="rbi">
     <div><div class="stars-big">${stars}</div><div class="rn">${rating}</div><div class="rs">${reviews} Google Reviews</div></div>
-    <div class="rq">"The best ${cat.toLowerCase()||"service"} experience I've had in Charlotte. Professional, fast, and completely transparent. I won't go anywhere else."
+    <div class="rq">"The best ${cat.toLowerCase()||"service"} experience I've had. Professional, fast, and completely transparent. I won't go anywhere else."
       <div style="margin-top:.9rem;font-size:.78rem;color:rgba(255,255,255,.3);font-style:normal">— Verified Google Review</div>
     </div>
   </div>
@@ -231,14 +205,14 @@ footer{border-top:1px solid rgba(255,255,255,.07);padding:1.8rem 5%;text-align:c
     </form>
   </div>
 </section>
-<footer>© 2026 ${name} · Charlotte, NC · All rights reserved</footer>
+<footer>© 2026 ${name} · All rights reserved</footer>
 </body>
 </html>`;
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint API" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Local API" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -283,25 +257,26 @@ app.delete("/api/businesses/:id", async (req, res) => {
   res.json({ deleted: true });
 });
 
+// ─── SEARCH (کاملاً دستی و بدون نیاز به کلید هوش مصنوعی) ───────────────────────
 app.post("/api/search", async (req, res) => {
-  try {
-    const { area } = req.body;
-    if (!area) return res.status(400).json({ error: "area required" });
+  const { area } = req.body;
+  if (!area) return res.status(400).json({ error: "area required" });
 
-    const prompt = `Generate a realistic list of 10 small independent local businesses in "${area}" that do NOT have a professional website. Mix categories: auto repair, salons, ethnic restaurants, cleaning, landscaping, tutoring, etc. No national chains.
+  // این لیست نمونه به صورت کاملاً دستی و آفلاین بلافاصله لود می‌شود
+  const localMockData = [
+    { name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM" },
+    { name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM" },
+    { name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM" },
+    { name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM" },
+    { name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM" },
+    { name: "Elite Math & Science Tutoring", address: `${area}, School St`, phone: "555-0654", category: "Tutoring", rating: 4.8, review_count: 67, hours: "Mon-Thu 3PM-8PM" },
+    { name: "Downtown Dental Care", address: `${area}, Medical Hub`, phone: "555-0111", category: "Dentistry", rating: 4.4, review_count: 143, hours: "Mon-Fri 8AM-5PM" },
+    { name: "Express Plumbing Experts", address: `${area}, Water St`, phone: "555-0555", category: "Plumbing", rating: 4.3, review_count: 92, hours: "24/7 Available" },
+    { name: "Comfort First HVAC Contractors", address: `${area}, Airflow Ave`, phone: "555-0888", category: "HVAC Repair", rating: 4.7, review_count: 115, hours: "Mon-Sat 8AM-6PM" },
+    { name: "Oriental Rug Restoration", address: `${area}, Luxury Row`, phone: "555-0333", category: "Rug Repair & Retail", rating: 5.0, review_count: 42, hours: "Mon-Sat 10AM-6PM" }
+  ];
 
-Return ONLY valid JSON array (no markdown):
-[{"name":"","address":"","phone":"","category":"","rating":4.5,"review_count":80,"hours":"Mon-Fri 9AM-6PM","reason":"Only Google listing found, no website"}]
-
-Make names, addresses, and phone numbers realistic for that specific area.`;
-
-    const text   = await callAI(prompt);
-    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-    res.json(parsed);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+  res.json(localMockData);
 });
 
 app.post("/api/generate/:id", async (req, res) => {
@@ -315,7 +290,8 @@ app.post("/api/generate/:id", async (req, res) => {
   await pool.query(
     `INSERT INTO generated_sites (business_id, slug, html)
      VALUES ($1,$2,$3)
-     ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`
+     ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
+    [id, slug, html]
   );
 
   await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, id]);
@@ -334,5 +310,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint API running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Local API running on port ${PORT}`));
 });
