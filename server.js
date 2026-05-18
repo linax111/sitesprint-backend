@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const { GoogleGenerativeAI } = require("@google/generative-ai"); // سوییچ به پکیج ۱۰۰٪ پایدار و سنتی گوگل
 
 const app  = express();
 const pool = new Pool({
@@ -12,9 +11,6 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
-
-// راه‌اندازی هوش مصنوعی گوگل با پکیج پایدار
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -49,58 +45,179 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس آماده و تایید شد.");
+    console.log("✅ Database Ready.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (تضمینی و بدون خطای پکیج) ────────────────────────
-async function generatePremiumHTML(biz) {
-  const prompt = `You are an expert award-winning UI/UX web designer. 
-Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
-Name: ${biz.name}
-Category: ${biz.category}
-Address: ${biz.address}
-Phone: ${biz.phone}
-Rating: ${biz.rating} (${biz.review_count} reviews)
-Hours: ${biz.hours}
-
-STRICT VISUAL & TECHNICAL REQUIREMENTS:
-1. Modern Immersive Aesthetic: Use deep dark modes with glowing vibrant neon accents tailored to the industry (e.g., electric blue/cyan for auto, luxury gold/rose-pastel for salons, warm amber for restaurants). Use beautiful glassmorphic elements (backdrop-filter: blur).
-2. High-Quality Real Images: Integrate dynamic background and section images using high-resolution Unsplash source URLs that fit the business category perfectly.
-3. Smooth Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Add 'data-aos="fade-up"' to elements so they animate beautifully on scroll.
-4. Modern Icons & Typography: Include FontAwesome CDN for icons. Use premium combinations of Google Fonts (e.g., Space Grotesk and Inter).
-5. Layout Structure: Immersive Hero, floating Stats Counter, a grid of core Premium Services, full-width Testimonial section, fully-styled contact form, and premium footer.
-
-Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
-
-  try {
-    // استفاده از متد سنتی و فوق‌العاده پایدار گوگل بدون ارورهای پکیج جدید
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let htmlContent = response.text();
-
-    if (!htmlContent) {
-      throw new Error("Gemini returned empty text response.");
-    }
-
-    htmlContent = htmlContent.trim();
-    if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
-    if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
-    
-    return htmlContent.trim();
-  } catch (error) {
-    console.error("🔴 Gemini Stable Engine Error:", error);
-    // ساختار استاتیک شیک بک‌آپ که اگر کلید منقضی بود پروژه ارور ندهد
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#10b981;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please refresh in a few seconds.</p></div></body></html>`;
+// ─── ULTRA-PREMIUM LOCAL HTML GENERATOR (بدون نیاز به هوش مصنوعی و بدون باگ) ───
+function generateLocalPremiumHTML(biz) {
+  // تشخیص تصویر مناسب بر اساس نوع کسب و کار برای زیبایی بیشتر
+  let bgImage = "https://images.unsplash.com/photo-1617788138017-80ad40651399?auto=format&fit=crop&w=1920&q=80"; // خودرو
+  if (/salon|hair|beauty|nail/i.test(biz.category)) {
+    bgImage = "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1920&q=80";
+  } else if (/food|restaurant|grill/i.test(biz.category)) {
+    bgImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80";
   }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${biz.name} | Premium Presentation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+    <style>
+        :root {
+            --bg-dark: #090d16;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.08);
+            --accent: #a8ff78;
+            --accent-glow: rgba(168, 255, 120, 0.4);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: var(--bg-dark);
+            color: #f3f4f6;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+        h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; color: #fff; }
+        
+        /* Hero Section */
+        .hero {
+            position: relative;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(rgba(9,13,22,0.85), rgba(9,13,22,0.95)), url('${bgImage}');
+            background-size: cover;
+            background-position: center;
+            padding: 20px;
+            text-align: center;
+        }
+        .hero::before {
+            content: ''; position: absolute; top: 20%; left: 50%; width: 400px; height: 400px;
+            background: var(--accent-glow); filter: blur(150px); border-radius: 50%; z-index: 1; transform: translate(-50%, -50%);
+        }
+        .hero-content { position: relative; z-index: 2; max-width: 850px; }
+        .badge {
+            background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+            padding: 6px 16px; border-radius: 50px; font-size: 12px; font-weight: 600;
+            letter-spacing: 0.05em; color: var(--accent); display: inline-block; margin-bottom: 24px;
+        }
+        .hero h1 { font-size: 3.5rem; line-height: 1.1; margin-bottom: 20px; letter-spacing: -0.02em; }
+        .hero p { font-size: 1.15rem; color: #9ca3af; margin-bottom: 35px; font-weight: 300; line-height: 1.6; }
+        
+        .cta-btn {
+            background: var(--accent); color: #000; padding: 14px 32px; border-radius: 10px;
+            font-size: 14px; font-weight: 700; text-decoration: none; display: inline-flex;
+            align-items: center; gap: 8px; box-shadow: 0 4px 20px var(--accent-glow); transition: 0.3s;
+        }
+        .cta-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 25px var(--accent); }
+
+        /* Specs Grid */
+        .specs-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 50px; }
+        .spec-box {
+            background: var(--card-bg); border: 1px solid var(--border); padding: 20px;
+            border-radius: 14px; backdrop-filter: blur(10px); text-align: left;
+        }
+        .spec-box i { color: var(--accent); font-size: 18px; margin-bottom: 12px; display: block; }
+        .spec-box div { font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 700; }
+        .spec-box p { font-size: 13px; color: #e5e7eb; marginTop: 4px; font-weight: 600; }
+
+        /* Features Section */
+        .features { padding: 100px 20px; max-width: 1100px; margin: 0 auto; text-align: center; }
+        .features h2 { font-size: 2.2rem; margin-bottom: 45px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+        .card {
+            background: var(--card-bg); border: 1px solid var(--border); padding: 35px 25px;
+            border-radius: 16px; backdrop-filter: blur(10px); text-align: left; transition: 0.3s;
+        }
+        .card:hover { border-color: rgba(168, 255, 120, 0.3); transform: translateY(-4px); }
+        .icon-wrapper {
+            width: 45px; height: 45px; background: rgba(168,255,120,0.1); border-radius: 10px;
+            display: flex; align-items: center; justify-content: center; margin-bottom: 20px; color: var(--accent);
+        }
+        .card h3 { font-size: 18px; margin-bottom: 12px; }
+        .card p { color: #9ca3af; font-size: 13.5px; line-height: 1.6; font-weight: 300; }
+
+        /* Footer */
+        footer { padding: 40px 20px; text-align: center; border-top: 1px solid var(--border); color: #4b5563; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+    <section class="hero">
+        <div class="hero-content" data-aos="fade-up">
+            <span class="badge"><i class="fa-solid from-neutral-400 fa-star"></i> ${biz.rating || "5.0"} RATED PREMIUM SERVICE</span>
+            <h1>Modern Digital Experience For For ${biz.name}</h1>
+            <p>Transforming local trust into a high-converting digital storefront. Explore your customized premium solution crafted specifically for the ${biz.category || "local"} market.</p>
+            
+            <a href="tel:${biz.phone}" class="cta-btn">
+                <i class="fa-solid fa-phone"></i> Contact Business: ${biz.phone || "Connect Now"}
+            </a>
+
+            <div class="specs-container">
+                <div class="spec-box">
+                    <i class="fa-solid fa-location-dot"></i>
+                    <div>Location & Address</div>
+                    <p>${biz.address || "Ballantyne, Charlotte NC"}</p>
+                </div>
+                <div class="spec-box">
+                    <i class="fa-solid fa-tags"></i>
+                    <div>Industry Core</div>
+                    <p>${biz.category || "Premium Services"}</p>
+                </div>
+                <div class="spec-box">
+                    <i class="fa-solid fa-clock"></i>
+                    <div>Operation Hours</div>
+                    <p>${biz.hours || "Open / Call for Details"}</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features">
+        <h2 data-aos="fade-up">Designed For Ultimate Growth</h2>
+        <div class="grid">
+            <div class="card" data-aos="fade-up" data-aos-delay="100">
+                <div class="icon-wrapper"><i class="fa-solid fa-bolt"></i></div>
+                <h3>Ultra-Fast Performance</h3>
+                <p>Lightning-fast load speeds engineered on global CDNs to secure high rankings and keep customers engaged instantly.</p>
+            </div>
+            <div class="card" data-aos="fade-up" data-aos-delay="200">
+                <div class="icon-wrapper"><i class="fa-solid fa-mobile-screen"></i></div>
+                <h3>100% Mobile Optimized</h3>
+                <p>Flawless adaptive layout built specifically to lock in bookings and calls smoothly from any smartphone screen.</p>
+            </div>
+            <div class="card" data-aos="fade-up" data-aos-delay="300">
+                <div class="icon-wrapper"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <h3>Local SEO Ready</h3>
+                <p>Advanced structured metadata layouts designed to outpace competitors and dominate local maps organically.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        &copy; 2026 ${biz.name}. Crafted with SiteSprint Premium Framework. All Rights Reserved.
+    </footer>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+    <script>
+        AOS.init({ duration: 800, once: true });
+    </script>
+</body>
+</html>`;
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Stable Gemini Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint High-Speed Local Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -179,7 +296,8 @@ const generateHandler = async (req, res) => {
     }
 
     const currentBiz = biz.rows[0];
-    const html = await generatePremiumHTML(currentBiz);
+    // رندر سریع قالب لوکال بدون تاخیر و ارورهای خارجی هوش مصنوعی
+    const html = generateLocalPremiumHTML(currentBiz);
     const slug = `${currentBiz.id}-${Date.now()}`;
 
     await pool.query(
@@ -214,5 +332,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Stable Premium Engine running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Independent High-Speed Engine running on port ${PORT}`));
 });
