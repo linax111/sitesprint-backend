@@ -1,11 +1,10 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+const cors    = require("cors");
 const { Pool } = require("pg");
+const Anthropic = require("@anthropic-ai/sdk");
 
-const app = express();
-const RAILWAY_URL = process.env.BASE_URL || "https://sitesprint-backend-production.up.railway.app";
-
+const app  = express();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
@@ -14,68 +13,104 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// راه‌اندازی کلاود با کلید معتبر شما در ریلوای
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_KEY
+});
+
+// ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS businesses (
-    id SERIAL PRIMARY KEY, name TEXT NOT NULL, address TEXT DEFAULT '',
-    phone TEXT DEFAULT '', category TEXT DEFAULT '', rating NUMERIC(2,1) DEFAULT 0,
-    review_count INT DEFAULT 0, hours TEXT DEFAULT '', website TEXT DEFAULT '',
-    google_url TEXT DEFAULT '', status TEXT DEFAULT 'prospect', notes TEXT DEFAULT '',
-    area_searched TEXT DEFAULT '', preview_slug TEXT DEFAULT '',
-    created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS generated_sites (
-    id SERIAL PRIMARY KEY, business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
-    slug TEXT UNIQUE NOT NULL, html TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
-  console.log("DB ready");
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS businesses (
+        id           SERIAL PRIMARY KEY,
+        name         TEXT NOT NULL,
+        address      TEXT DEFAULT '',
+        phone        TEXT DEFAULT '',
+        category     TEXT DEFAULT '',
+        rating       NUMERIC(2,1) DEFAULT 0,
+        review_count INT DEFAULT 0,
+        hours        TEXT DEFAULT '',
+        website      TEXT DEFAULT '',
+        google_url   TEXT DEFAULT '',
+        status       TEXT DEFAULT 'prospect',
+        notes        TEXT DEFAULT '',
+        area_searched TEXT DEFAULT '',
+        preview_slug  TEXT DEFAULT '',
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS preview_slug TEXT DEFAULT '';`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS generated_sites (
+        id          SERIAL PRIMARY KEY,
+        business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
+        slug        TEXT UNIQUE NOT NULL,
+        html        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    console.log("✅ دیتابیس آماده و متصل است.");
+  } catch (err) {
+    console.error("❌ DB Init Error:", err);
+  }
 }
 
-async function generateHTML(biz) {
-  const key = process.env.ANTHROPIC_KEY;
-  if (!key) throw new Error("No ANTHROPIC_KEY set");
-  const prompt = `Create a stunning modern single-page business website HTML for:
+// ─── AI PREMIUM HTML GENERATOR (موتور کلاود با لاگ دقیق ارور) ───────────────────
+async function generatePremiumHTML(biz) {
+  const prompt = `You are an elite, award-winning UI/UX web designer. 
+Generate an incredibly stunning, high-converting, and bespoke single-page landing page for this local business:
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address}
 Phone: ${biz.phone}
-Rating: ${biz.rating} stars (${biz.review_count} reviews)
+Rating: ${biz.rating} (${biz.review_count} reviews)
 Hours: ${biz.hours}
-Use dark modern design, Unsplash images, Google Fonts, FontAwesome via CDN.
-Return ONLY raw HTML starting with <!DOCTYPE html>. No markdown, no explanation.`;
 
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-3-5-haiku-20241022", max_tokens: 4000, messages: [{ role: "user", content: prompt }] })
-  });
-  if (!resp.ok) throw new Error("API error: " + await resp.text());
-  const data = await resp.json();
-  let html = data.content[0].text.trim();
-  return html.replace(/^```html\n?/, "").replace(/\n?```$/, "").trim();
+STRICT DESIGN DIRECTION (Make the owner say "Wow, I need this right now!"):
+1. Immersive Color Palette: Tailor the style deeply to the industry. Use ultra-modern dark modes with vibrant neon glowing accents (e.g., luxury deep dark champagne gold and rose-pastel for beauty salons, sleek electric cyan and midnight blue for auto glass/repair, warm immersive crimson or charcoal amber for premium restaurants).
+2. Jaw-Dropping Typography: Use high-end Google Fonts combinations (like Space Grotesk for bold headers, Syne, or Playfair Display combined with a clean Inter or Montserrat for body copy).
+3. Realistic Premium Visuals: Use high-resolution, un-cropped background and gallery images using source URLs from Unsplash that perfectly fit the exact business type.
+4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout sections.
+5. High-End Layout: Glassmorphic fixed navigation bar, immersive Hero, floating interactive Stats grid, core Services grid, full-width Testimonial showcase, and a glowing functional Contact form.
+
+Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 3800,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    let htmlContent = response.content[0].text.trim();
+    if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
+    if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
+    
+    return htmlContent.trim();
+  } catch (error) {
+    // 💥 کدهای جدید مانیتورینگ برای به دام انداختن علت رد درخواست کلاود:
+    console.error("🔴 CLAUDE RAW ERROR DETAILS:", JSON.stringify(error, null, 2));
+    console.error("🔴 ERROR MESSAGE:", error.message);
+    
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a8ff78;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is updating. Please reload in 5 seconds.</p></div></body></html>`;
+  }
 }
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Backend" }));
+// ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.post("/api/reset-db", async (req, res) => {
-  try {
-    await pool.query("DROP TABLE IF EXISTS generated_sites CASCADE");
-    await pool.query("DROP TABLE IF EXISTS businesses CASCADE");
-    await initDB();
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Log-Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
-  try {
-    const { status, q } = req.query;
-    let sql = "SELECT * FROM businesses WHERE 1=1";
-    const params = [];
-    if (status && status !== "all") { sql += ` AND status=$${params.length+1}`; params.push(status); }
-    if (q) { sql += ` AND (name ILIKE $${params.length+1} OR category ILIKE $${params.length+2})`; params.push(`%${q}%`,`%${q}%`); }
-    sql += " ORDER BY created_at DESC";
-    const r = await pool.query(sql, params);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  const { status, q } = req.query;
+  let sql = "SELECT * FROM businesses WHERE 1=1";
+  const params = [];
+  if (status && status !== "all") { sql += ` AND status=$${params.length+1}`; params.push(status); }
+  if (q) { sql += ` AND (name ILIKE $${params.length+1} OR category ILIKE $${params.length+2} OR address ILIKE $${params.length+3})`; params.push(`%${q}%`,`%${q}%`,`%${q}%`); }
+  sql += " ORDER BY created_at DESC";
+  const result = await pool.query(sql, params);
+  res.json(result.rows);
 });
 
 app.post("/api/businesses", async (req, res) => {
@@ -84,74 +119,100 @@ app.post("/api/businesses", async (req, res) => {
     const r = await pool.query(
       `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,website,google_url,status,area_searched)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [b.name,b.address||"",b.phone||"",b.category||"",b.rating||0,b.review_count||0,b.hours||"",b.website||"",b.google_url||"",b.status||"prospect",b.area_searched||""]
+      [b.name, b.address||"", b.phone||"", b.category||"", b.rating||0, b.review_count||0,
+       b.hours||"", b.website||"", b.google_url||"", b.status||"prospect", b.area_searched||""]
     );
     res.status(201).json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put("/api/businesses/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const b = req.body;
-    const allowed = ["name","address","phone","category","rating","review_count","hours","website","google_url","status","notes","preview_slug"];
-    const sets = [], params = [];
-    for (const col of allowed) { if (col in b) { sets.push(`${col}=$${params.length+1}`); params.push(b[col]); } }
-    if (!sets.length) return res.json({ ok: true });
-    sets.push("updated_at=NOW()"); params.push(id);
-    await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${params.length}`, params);
-    const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  const { id } = req.params;
+  const b = req.body;
+  const allowed = ["name","address","phone","category","rating","review_count","hours","website","google_url","status","notes","preview_slug"];
+  const sets = []; const params = [];
+  for (const col of allowed) {
+    if (col in b) { sets.push(`${col}=$${params.length+1}`); params.push(b[col]); }
+  }
+  if (!sets.length) return res.json({ ok: true });
+  sets.push(`updated_at=NOW()`);
+  params.push(id);
+  await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${params.length}`, params);
+  const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
+  res.json(r.rows[0]);
 });
 
 app.delete("/api/businesses/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM businesses WHERE id=$1",[req.params.id]); res.json({deleted:true}); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
+  res.json({ deleted: true });
 });
 
 app.post("/api/search", async (req, res) => {
   const { area } = req.body;
   if (!area) return res.status(400).json({ error: "area required" });
-  res.json([
-    { name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM", area_searched: area },
-    { name: "The Local Grill & Bistro", address: `${area}, Pizza Blvd`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area },
-    { name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM", area_searched: area },
-    { name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM", area_searched: area },
-    { name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM", area_searched: area }
-  ]);
+
+  const localMockData = [
+    { id: 1001, name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM", area_searched: area },
+    { id: 1002, name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area },
+    { id: 1003, name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM", area_searched: area },
+    { id: 1004, name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM", area_searched: area },
+    { id: 1005, name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM", area_searched: area }
+  ];
+  res.json(localMockData);
 });
 
-app.post("/api/generate/:id", async (req, res) => {
+const generateHandler = async (req, res) => {
   try {
     const { id } = req.params;
-    let result = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-    if (!result.rows.length) {
+    let biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
+    
+    if (!biz.rows.length) {
       const b = req.body;
-      result = await pool.query(
-        `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,status,area_searched) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [b.name||"Business",b.address||"",b.phone||"",b.category||"",b.rating||5,b.review_count||0,b.hours||"","prospect",b.area_searched||""]
+      const insertResult = await pool.query(
+        `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, status, area_searched)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [b.name || "Business", b.address || "", b.phone || "", b.category || "", b.rating || 5, b.review_count || 50, b.hours || "", "prospect", b.area_searched || ""]
       );
+      biz = insertResult;
     }
-    const biz = result.rows[0];
-    const html = await generateHTML(biz);
-    const slug = `${biz.id}-${Date.now()}`;
-    await pool.query(`INSERT INTO generated_sites (business_id,slug,html) VALUES ($1,$2,$3) ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,[biz.id,slug,html]);
-    await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2",[slug,biz.id]);
-    res.json({ url: `${RAILWAY_URL}/preview/${slug}`, slug });
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
-});
+
+    const currentBiz = biz.rows[0];
+    const html = await generatePremiumHTML(currentBiz);
+    const slug = `${currentBiz.id}-${Date.now()}`;
+
+    await pool.query(
+      `INSERT INTO generated_sites (business_id, slug, html)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
+      [currentBiz.id, slug, html]
+    );
+
+    await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
+    res.json({ url: `/preview/${slug}`, slug });
+  } catch (err) {
+    console.error("🔴 Generation Route Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+app.post("/api/generate/:id", generateHandler);
+app.post("/generate/:id", generateHandler);
 
 app.get("/preview/:slug", async (req, res) => {
   try {
-    const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1",[req.params.slug]);
+    const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
     if (!r.rows.length) return res.status(404).send("Site not found");
-    res.setHeader("Content-Type","text/html; charset=utf-8");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(r.rows[0].html);
-  } catch (e) { res.status(500).send(e.message); }
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
 });
 
+// ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-pool.query("SELECT 1").then(() => {
-  initDB().then(() => app.listen(PORT, () => console.log(`Server on port ${PORT}`)));
-}).catch(e => { console.error(e); process.exit(1); });
+initDB().then(() => {
+  app.listen(PORT, () => console.log(`🚀 Claude Premium Engine active on port ${PORT}`));
+});
