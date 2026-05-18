@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const Anthropic = require("@anthropic-ai/sdk"); // استفاده از SDK رسمی آنتروپیک
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app  = express();
 const pool = new Pool({
@@ -15,7 +15,7 @@ app.use(express.json());
 
 // راه‌اندازی کلاود با کلید معتبر شما در ریلوای
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY || process.env.GEMINI_API_KEY, 
+  apiKey: process.env.ANTHROPIC_KEY
 });
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
@@ -51,17 +51,14 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ Database structure synced.");
+    console.log("✅ دیتابیس آماده و متصل است.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI SITE ENGINE (پرامپت جادویی و دگرگون‌کننده کلاود) ──────────────────────────
+// ─── AI PREMIUM HTML GENERATOR (موتور کلاود با لاگ دقیق ارور) ───────────────────
 async function generatePremiumHTML(biz) {
-  // آماده‌سازی کلمات کلیدی برای تصاویر صنف کسب‌وکار
-  const category = (biz.category || "business").toLowerCase();
-  
   const prompt = `You are an elite, award-winning UI/UX web designer. 
 Generate an incredibly stunning, high-converting, and bespoke single-page landing page for this local business:
 Name: ${biz.name}
@@ -74,21 +71,13 @@ Hours: ${biz.hours}
 STRICT DESIGN DIRECTION (Make the owner say "Wow, I need this right now!"):
 1. Immersive Color Palette: Tailor the style deeply to the industry. Use ultra-modern dark modes with vibrant neon glowing accents (e.g., luxury deep dark champagne gold and rose-pastel for beauty salons, sleek electric cyan and midnight blue for auto glass/repair, warm immersive crimson or charcoal amber for premium restaurants).
 2. Jaw-Dropping Typography: Use high-end Google Fonts combinations (like Space Grotesk for bold headers, Syne, or Playfair Display combined with a clean Inter or Montserrat for body copy).
-3. Realistic Premium Visuals: Use high-resolution, un-cropped background and gallery images using source URLs from Unsplash that perfectly fit the exact business type (e.g., cinematic shots of modern styling chairs, delicious macro food shots, or precise windshield repair tools).
-4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"', 'data-aos="zoom-in-up"' to layout sections, headers, and individual service cards so the page comes to life beautifully as the owner scrolls.
-5. High-End Layout: 
-   - A glassmorphic fixed Navigation bar.
-   - An epic Hero section with a powerful headline that triggers emotion.
-   - Floating interactive Stats grid (Rating, Happy Clients counters).
-   - Core Services grid with striking smooth micro-interactions and scale hover expansions.
-   - A gorgeous full-width Testimonial showcase with five-star golden badge details.
-   - A meticulously styled, high-converting functional Contact form with glowing field highlights.
-   - Premium clean footer.
+3. Realistic Premium Visuals: Use high-resolution, un-cropped background and gallery images using source URLs from Unsplash that perfectly fit the exact business type.
+4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout sections.
+5. High-End Layout: Glassmorphic fixed navigation bar, immersive Hero, floating interactive Stats grid, core Services grid, full-width Testimonial showcase, and a glowing functional Contact form.
 
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // صدا زدن آخرین نسخه معتبر و سریع هایکو برای ساخت سریع لایوت
     const response = await anthropic.messages.create({
       model: "claude-3-5-haiku-20241022",
       max_tokens: 3800,
@@ -96,22 +85,22 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     });
 
     let htmlContent = response.content[0].text.trim();
-    
-    // تمیز کردن قالب از تگ‌های مارک‌داون احتمالی هوش مصنوعی
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Claude AI Generation Error, triggering seamless fallback:", error);
-    // اگر کلاود موقتا لیمیت شد، سیستم کرش نمی‌کند و یک قالب بک‌آپی لوکس لوکال رندر می‌کند
+    // 💥 کدهای جدید مانیتورینگ برای به دام انداختن علت رد درخواست کلاود:
+    console.error("🔴 CLAUDE RAW ERROR DETAILS:", JSON.stringify(error, null, 2));
+    console.error("🔴 ERROR MESSAGE:", error.message);
+    
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a8ff78;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is updating. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Log-Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -190,7 +179,6 @@ const generateHandler = async (req, res) => {
     }
 
     const currentBiz = biz.rows[0];
-    // فراخوانی موتور پیشرفته کلاود
     const html = await generatePremiumHTML(currentBiz);
     const slug = `${currentBiz.id}-${Date.now()}`;
 
