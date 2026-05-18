@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const fetch   = require("node-fetch");
+
 const app  = express();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -11,8 +11,6 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
-app.use(cors());
-
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
   await pool.query(`
