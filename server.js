@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const Anthropic = require("@anthropic-ai/sdk"); // بازگشت باشکوه کلاود!
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app  = express();
 const pool = new Pool({
@@ -18,7 +18,7 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_KEY
 });
 
-// ─── DB INIT ─────────────────────────────────────────────────────────────────
+// ─── DB INIT & MODEL RADAR ───────────────────────────────────────────────────
 async function initDB() {
   try {
     await pool.query(`
@@ -52,6 +52,16 @@ async function initDB() {
       );
     `);
     console.log("✅ Database synced successfully.");
+
+    // 📡 رادار مدل‌های آنتروپیک: چاپ لیست مدل‌های مجاز برای کلید شما در لاگ ریلوای
+    try {
+      const models = await anthropic.models.list();
+      const modelNames = models.data.map(m => m.id).join("\n- ");
+      console.log("🟢 AVAILABLE CLAUDE MODELS FOR YOUR API KEY:\n- " + modelNames);
+    } catch (apiErr) {
+      console.log("⚠️ Could not fetch model list. Check API Key validity.");
+    }
+
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
@@ -93,11 +103,56 @@ function getIndustryImages(category) {
   return imgs;
 }
 
-// ─── CLAUDE 3.5 SONNET GENERATOR (پرچمدار طراحی) ──────────────────────────────
+// ─── ELITE LOCAL VISUAL ENGINE (سیستم بک‌آپ محلی در صورت قطعی) ───────────────
+function generateLocalMasterpiece(biz) {
+  const images = getIndustryImages(biz.category);
+  const cat = (biz.category || "business").toLowerCase();
+  
+  let gradient = "from-indigo-500 via-purple-500 to-pink-500";
+  if (cat.includes("salon") || cat.includes("beauty")) gradient = "from-pink-500 via-rose-500 to-amber-500";
+  else if (cat.includes("repair") || cat.includes("auto")) gradient = "from-sky-500 via-blue-600 to-cyan-500";
+  else if (cat.includes("rest") || cat.includes("food")) gradient = "from-amber-500 via-orange-500 to-red-600";
+
+  return `<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${biz.name} | Premium Presentation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&family=Plus+Jakarta+Sans:wght@400;600&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030307; color: #f8fafc; }
+        .heading-font { font-family: 'Space Grotesk', sans-serif; }
+    </style>
+</head>
+<body class="antialiased">
+    <section class="relative min-h-screen flex items-center justify-center pt-24 px-6">
+        <div class="absolute inset-0 z-0">
+            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#030307]/90 to-[#030307]"></div>
+            <img src="${images.hero}" class="w-full h-full object-cover opacity-60" alt="Hero">
+        </div>
+        <div class="relative z-10 text-center max-w-4xl mx-auto">
+            <h1 class="heading-font text-5xl md:text-7xl font-extrabold text-white mt-6">
+                Premium Solutions by <br><span class="text-transparent bg-clip-text bg-gradient-to-r ${gradient}">${biz.name}</span>
+            </h1>
+        </div>
+    </section>
+    <section class="py-24 px-6 max-w-7xl mx-auto grid md:grid-cols-3 gap-6 relative z-10">
+        <img src="${images.g1}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
+        <img src="${images.g2}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
+        <img src="${images.g3}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
+    </section>
+</body>
+</html>`;
+}
+
+// ─── CLAUDE GENERATOR (سونات 4.6 - پرچمدار طراحی) ───────────────────────────
 async function generatePremiumHTML(biz) {
   const images = getIndustryImages(biz.category);
 
-  const prompt = `You are a world-class, elite UI/UX web designer (Awwwards winner level).
+  const prompt = `You are a world-class, elite UI/UX web designer.
 Generate an incredibly stunning, high-end single-page landing page for this business:
 Name: ${biz.name}
 Category: ${biz.category}
@@ -105,22 +160,16 @@ Address: ${biz.address}
 Phone: ${biz.phone}
 Rating: ${biz.rating} (${biz.review_count} reviews)
 
-STRICT DESIGN DIRECTION (Make it look like a $10,000 agency website):
+STRICT DESIGN DIRECTION:
 1. Use Tailwind CSS via CDN.
-2. Immersive Color Palette: Dark mode glassmorphism with neon/glowing accent colors tailored to the industry (e.g. gold/rose for beauty, cyan for auto, crimson for restaurants). Use beautiful gradients and blur backdrops.
+2. Immersive Color Palette: Dark mode glassmorphism with neon glowing accents tailored to the industry. Use beautiful gradients and blur backdrops.
 3. Typography: Include FontAwesome icons. Use elegant Google Fonts (Space Grotesk or Syne for headings, Inter for body text).
 4. Fluid Animations: Include AOS library (Animate on Scroll). Apply 'data-aos="fade-up"' to layout containers.
-5. Elite Layout Structure: 
-   - A sticky glassmorphic Navigation bar.
-   - A jaw-dropping Hero section with a massive bold headline and two CTA buttons.
-   - An interactive floating Stats counter grid (Rating, Reviews).
-   - A detailed Premium Services grid with hover effects.
-   - A stunning Visual Gallery grid (3 items).
-   - A high-converting Contact Form.
+5. Elite Layout Structure: Sticky glassmorphic Navbar, jaw-dropping Hero section, floating Stats counter, Premium Services grid, Visual Gallery grid (3 items), and a high-converting Contact Form.
 
 🚨 CRITICAL IMAGE RULE (CSS INJECTION TRICK):
 Do NOT write any <img src="..."> tags for the hero or gallery to prevent broken 404 links. 
-I will inject the images via CSS. You MUST use exactly these predefined CSS classes on empty <div> elements to show images:
+You MUST use exactly these predefined CSS classes on empty <div> elements to show images:
 - For the Hero Section background container, add the class: 'bg-hero-img'
 - For the 3 Visual Gallery grid items, use exactly this structure:
   <div class="gallery-img-1 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in"></div>
@@ -130,9 +179,9 @@ I will inject the images via CSS. You MUST use exactly these predefined CSS clas
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown blocks.`;
 
   try {
-    // 💥 استفاده از نسخه دقیق، رسمی و زنده کلاود سونات (بدون ارور ۴۰۴)
+    // 🚀 ارتقای مستقیم به جدیدترین غول طراحی سال ۲۰۲۶
     const response = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-6",
       max_tokens: 8000,
       messages: [{ role: "user", content: prompt }],
     });
@@ -141,13 +190,12 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown 
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
-    // تزریق مستقیم عکس‌های لوکس به کدهای شاهکار کلاود
+    // تزریق مستقیم عکس‌های لوکس
     const cssInjection = `
     <style>
       .bg-hero-img {
         background-image: linear-gradient(rgba(3, 3, 7, 0.65), rgba(3, 3, 7, 0.98)), url('${images.hero}');
-        background-size: cover; 
-        background-position: center;
+        background-size: cover; background-position: center;
       }
       .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; transition: transform 0.5s; }
       .gallery-img-1:hover { transform: scale(1.05); }
@@ -167,13 +215,13 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown 
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Claude Sonnet Error:", error.message);
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Presentation is syncing. Please reload.</p></div></body></html>`;
+    return generateLocalMasterpiece(biz);
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Sonnet Elite Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Ultimate Claude Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -228,10 +276,7 @@ app.post("/api/search", async (req, res) => {
 
   const localMockData = [
     { id: 1001, name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM", area_searched: area },
-    { id: 1002, name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area },
-    { id: 1003, name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM", area_searched: area },
-    { id: 1004, name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM", area_searched: area },
-    { id: 1005, name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM", area_searched: area }
+    { id: 1002, name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area }
   ];
   res.json(localMockData);
 });
@@ -286,5 +331,5 @@ app.get("/preview/:slug", async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Claude Sonnet Engine active on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Production Engine active on port ${PORT}`));
 });
