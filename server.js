@@ -257,47 +257,67 @@ app.delete("/api/businesses/:id", async (req, res) => {
   res.json({ deleted: true });
 });
 
-// ─── SEARCH (کاملاً دستی و بدون نیاز به کلید هوش مصنوعی) ───────────────────────
+// ─── SEARCH (کاملاً دستی و آفلاین) ───────────────────────────────────────────────
 app.post("/api/search", async (req, res) => {
   const { area } = req.body;
   if (!area) return res.status(400).json({ error: "area required" });
 
-  // این لیست نمونه به صورت کاملاً دستی و آفلاین بلافاصله لود می‌شود
   const localMockData = [
-    { name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM" },
-    { name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM" },
-    { name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM" },
-    { name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM" },
-    { name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM" },
-    { name: "Elite Math & Science Tutoring", address: `${area}, School St`, phone: "555-0654", category: "Tutoring", rating: 4.8, review_count: 67, hours: "Mon-Thu 3PM-8PM" },
-    { name: "Downtown Dental Care", address: `${area}, Medical Hub`, phone: "555-0111", category: "Dentistry", rating: 4.4, review_count: 143, hours: "Mon-Fri 8AM-5PM" },
-    { name: "Express Plumbing Experts", address: `${area}, Water St`, phone: "555-0555", category: "Plumbing", rating: 4.3, review_count: 92, hours: "24/7 Available" },
-    { name: "Comfort First HVAC Contractors", address: `${area}, Airflow Ave`, phone: "555-0888", category: "HVAC Repair", rating: 4.7, review_count: 115, hours: "Mon-Sat 8AM-6PM" },
-    { name: "Oriental Rug Restoration", address: `${area}, Luxury Row`, phone: "555-0333", category: "Rug Repair & Retail", rating: 5.0, review_count: 42, hours: "Mon-Sat 10AM-6PM" }
+    { id: 1001, name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM", area_searched: area },
+    { id: 1002, name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area },
+    { id: 1003, name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM", area_searched: area },
+    { id: 1004, name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM", area_searched: area },
+    { id: 1005, name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM", area_searched: area },
+    { id: 1006, name: "Elite Math & Science Tutoring", address: `${area}, School St`, phone: "555-0654", category: "Tutoring", rating: 4.8, review_count: 67, hours: "Mon-Thu 3PM-8PM", area_searched: area },
+    { id: 1007, name: "Downtown Dental Care", address: `${area}, Medical Hub`, phone: "555-0111", category: "Dentistry", rating: 4.4, review_count: 143, hours: "Mon-Fri 8AM-5PM", area_searched: area },
+    { id: 1008, name: "Express Plumbing Experts", address: `${area}, Water St`, phone: "555-0555", category: "Plumbing", rating: 4.3, review_count: 92, hours: "24/7 Available", area_searched: area },
+    { id: 1009, name: "Comfort First HVAC Contractors", address: `${area}, Airflow Ave`, phone: "555-0888", category: "HVAC Repair", rating: 4.7, review_count: 115, hours: "Mon-Sat 8AM-6PM", area_searched: area },
+    { id: 1010, name: "Oriental Rug Restoration", address: `${area}, Luxury Row`, phone: "555-0333", category: "Rug Repair & Retail", rating: 5.0, review_count: 42, hours: "Mon-Sat 10AM-6PM", area_searched: area }
   ];
 
   res.json(localMockData);
 });
 
+// ─── GENERATE SITE (حل مشکل آیدی و ثبت خودکار در دیتابیس) ───────────────────────
 app.post("/api/generate/:id", async (req, res) => {
-  const { id } = req.params;
-  const biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-  if (!biz.rows.length) return res.status(404).json({ error: "Not found" });
+  try {
+    const { id } = req.params;
+    const b = req.body; // اطلاعات فرستاده شده از سمت فرانت‌اند
+    
+    // ۱. بررسی اینکه آیا این بیزینس در دیتابیس هست یا خیر
+    let biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
+    
+    // اگر بیزینس هنوز در دیتابیس نبود، اول آن را خودکار ثبت می‌کنیم تا مشکل آیدی حل شود
+    if (!biz.rows.length) {
+      const insertResult = await pool.query(
+        `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, website, google_url, status, area_searched)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [b.name || "Business", b.address || "", b.phone || "", b.category || "", b.rating || 5, b.review_count || 50, b.hours || "", b.website || "", b.google_url || "", "prospect", b.area_searched || ""]
+      );
+      biz = insertResult;
+    }
 
-  const html = generateHTML(biz.rows[0]);
-  const slug = `${id}-${Date.now()}`;
+    const currentBiz = biz.rows[0];
+    const html = generateHTML(currentBiz);
+    const slug = `${currentBiz.id}-${Date.now()}`;
 
-  await pool.query(
-    `INSERT INTO generated_sites (business_id, slug, html)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
-    [id, slug, html]
-  );
+    // ۲. ذخیره قالب وب‌سایت در جدول تولید سایت‌ها
+    await pool.query(
+      `INSERT INTO generated_sites (business_id, slug, html)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
+      [currentBiz.id, slug, html]
+    );
 
-  await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, id]);
+    // ۳. ذخیره اسلاگ در پروفایل بیزینس
+    await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
 
-  const previewUrl = `${process.env.BASE_URL || ""}/preview/${slug}`;
-  res.json({ url: previewUrl, slug });
+    const previewUrl = `${process.env.BASE_URL || ""}/preview/${slug}`;
+    res.json({ url: previewUrl, slug });
+  } catch (err) {
+    console.error("🔴 Generation Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/preview/:slug", async (req, res) => {
