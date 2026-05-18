@@ -51,7 +51,7 @@ async function initDB() {
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (موتور تولید لایوت‌های لوکس گوگل) ──────────────────
+// ─── AI PREMIUM HTML GENERATOR (آپدیت شده به نسخه پایدار v1 گوگل) ────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
 Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
@@ -79,8 +79,8 @@ STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // فراخوانی موتور هوشمند و سریع فلش گوگل
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+    // 💥 تغییر مهم: اصلاح آدرس به نسخه رسمی v1 جهت حل ارور عدم شناسایی مدل
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -88,12 +88,9 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     const data = await response.json();
     
-    // استخراج فوق‌العاده ایمن متن از آرایه‌های پاسخ دیتای گوگل
     let htmlContent = "";
     if (data && data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
       htmlContent = data.candidates[0].content.parts[0].text;
-    } else if (data && data.content?.parts[0]?.text) {
-      htmlContent = data.content.parts[0].text;
     }
 
     if (!htmlContent) {
@@ -108,7 +105,6 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Gemini AI Production Engine Error:", error.message);
-    // لایوت لوکال بک‌آپی در صورت لیمیت بودن ناگهانی کلید
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
