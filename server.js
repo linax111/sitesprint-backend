@@ -45,13 +45,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس آماده و متصل است.");
+    console.log("✅ دیتابیس متصل و ساختار جدول‌ها تایید شد.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (قدرت گرفته از موتور پایدار جمینای پرو) ─────────
+// ─── AI PREMIUM HTML GENERATOR (موتور تولید لایوت‌های لوکس گوگل) ──────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
 Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
@@ -66,7 +66,7 @@ STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
 1. Immersive Color Palette: Use a gorgeous dark mode experience tailored to the industry with neon/glowing accent colors (e.g., luxury deep dark champagne gold and soft champagne for salons; sleek obsidian black and electric cyan for auto glass/repair; rich charcoal and warm amber/crimson for premium restaurants). Use beautiful glassmorphic cards (backdrop-filter: blur) and subtle smooth gradients.
 2. Jaw-Dropping Typography & Icons: Include FontAwesome icons CDN. Use elegant Google Fonts (e.g., Space Grotesk, Syne, or Playfair Display for headings; clean Inter or Montserrat for body).
 3. Ultra High-Quality Real Visuals: Integrate stunning, high-resolution background and gallery images using source URLs from Unsplash that perfectly and realistically match the exact business type.
-4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"', 'data-aos="zoom-in-up"' or 'data-aos="fade-right"' to layout containers, service boxes, and headers so the entire page animates beautifully as the user scrolls down.
+4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout containers, service boxes, and headers so the entire page animates beautifully as the user scrolls down.
 5. Elite Layout Structure: 
    - A sticky glassmorphic Navigation bar with active design touches.
    - A jaw-dropping Hero section with a massive bold emotional hook headline.
@@ -79,8 +79,8 @@ STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // فراخوانی مستقیم API گوگل بدون نیاز به پکیج‌های ناپایدار
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+    // فراخوانی موتور هوشمند و سریع فلش گوگل
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -88,25 +88,34 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     const data = await response.json();
     
-    if (!data.candidates || !data.candidates[0]?.content?.parts[0]?.text) {
-      throw new Error("Invalid response format from Gemini API");
+    // استخراج فوق‌العاده ایمن متن از آرایه‌های پاسخ دیتای گوگل
+    let htmlContent = "";
+    if (data && data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
+      htmlContent = data.candidates[0].content.parts[0].text;
+    } else if (data && data.content?.parts[0]?.text) {
+      htmlContent = data.content.parts[0].text;
     }
 
-    let htmlContent = data.candidates[0].content.parts[0].text.trim();
+    if (!htmlContent) {
+      console.error("🔴 Gemini Raw Response Log:", JSON.stringify(data));
+      throw new Error("Empty text returned from Gemini API");
+    }
+
+    htmlContent = htmlContent.trim();
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Gemini AI Production Engine Error:", error.message);
-    // قالب لوکال شیک بک‌آپی در صورت بروز خطای کلید
+    // لایوت لوکال بک‌آپی در صورت لیمیت بودن ناگهانی کلید
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint High-End Production Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Premium Production Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -220,5 +229,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Engine active on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Production Engine active on port ${PORT}`));
 });
