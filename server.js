@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
+const { GoogleGenerativeAI } = require("@google/generative-ai"); // استفاده از SDK رسمی و پایدار گوگل
 
 const app  = express();
 const pool = new Pool({
@@ -11,6 +12,9 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+
+// راه‌اندازی هوش مصنوعی گوگل با پکیج رسمی و کلید شما در ریلوای
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -51,7 +55,7 @@ async function initDB() {
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (آپدیت شده به نسخه پایدار v1 گوگل) ────────────────
+// ─── AI PREMIUM HTML GENERATOR (موتور ۱۰۰٪ پایدار با پکیج رسمی گوگل) ──────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
 Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
@@ -79,23 +83,14 @@ STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // 💥 تغییر مهم: اصلاح آدرس به نسخه رسمی v1 جهت حل ارور عدم شناسایی مدل
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
-    
-    const data = await response.json();
-    
-    let htmlContent = "";
-    if (data && data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
-      htmlContent = data.candidates[0].content.parts[0].text;
-    }
+    // صدا زدن مدل از طریق ساختار کاملاً تایید شده و بومی SDK گوگل
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let htmlContent = response.text();
 
     if (!htmlContent) {
-      console.error("🔴 Gemini Raw Response Log:", JSON.stringify(data));
-      throw new Error("Empty text returned from Gemini API");
+      throw new Error("Empty text returned from official Gemini SDK layer.");
     }
 
     htmlContent = htmlContent.trim();
@@ -104,14 +99,15 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Gemini AI Production Engine Error:", error.message);
+    console.error("🔴 Gemini SDK Engine Error:", error.message);
+    // لایوت لوکال بک‌آپی شیک جهت بالا ماندن فرانت‌اَند در شرایط اضطراری
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Premium Production Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint High-End Production Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
