@@ -13,7 +13,7 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با متغیر رسمی آنتروپیک
+// راه‌اندازی کلاود با کلید معتبر شما در ریلوای
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_KEY
 });
@@ -57,10 +57,10 @@ async function initDB() {
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
+// ─── AI PREMIUM HTML GENERATOR (قدرت گرفته از قوی‌ترین مدل فرانت‌اند دنیا) ───────
 async function generatePremiumHTML(biz) {
-  const prompt = `You are an elite, award-winning UI/UX web designer. 
-Generate an incredibly stunning, high-converting, and bespoke single-page landing page for this local business:
+  const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
+Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address}
@@ -68,19 +68,27 @@ Phone: ${biz.phone}
 Rating: ${biz.rating} (${biz.review_count} reviews)
 Hours: ${biz.hours}
 
-STRICT DESIGN DIRECTION (Make the owner say "Wow, I need this right now!"):
-1. Immersive Color Palette: Tailor the style deeply to the industry. Use ultra-modern dark modes with vibrant neon glowing accents (e.g., luxury deep dark champagne gold and rose-pastel for beauty salons, sleek electric cyan and midnight blue for auto glass/repair, warm immersive crimson or charcoal amber for premium restaurants).
-2. Jaw-Dropping Typography: Use high-end Google Fonts combinations (like Space Grotesk for bold headers, Syne, or Playfair Display combined with a clean Inter or Montserrat for body copy).
-3. Realistic Premium Visuals: Use high-resolution, un-cropped background and gallery images using source URLs from Unsplash that perfectly fit the exact business type.
-4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout sections.
-5. High-End Layout: Glassmorphic fixed navigation bar, immersive Hero, floating interactive Stats grid, core Services grid, full-width Testimonial showcase, and a glowing functional Contact form.
+STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
+1. Immersive Color Palette: Use a gorgeous dark mode experience tailored to the industry with neon/glowing accent colors (e.g., luxury dark velvet, gold, and soft champagne for salons; sleek obsidian black and electric cyan for auto repair; rich charcoal and warm amber/crimson for restaurants). Use beautiful glassmorphic cards (backdrop-filter: blur) and subtle smooth gradients.
+2. Jaw-Dropping Typography & Icons: Include FontAwesome icons CDN. Use elegant Google Fonts (e.g., Space Grotesk, Syne, or Playfair Display for headings; clean Inter or Montserrat for body).
+3. Ultra High-Quality Real Visuals: Integrate stunning, high-resolution background and gallery images using source URLs from Unsplash that perfectly and realistically match the exact business type.
+4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"', 'data-aos="zoom-in-up"' or 'data-aos="fade-right"' to layout containers, service boxes, and headers so the entire page animates beautifully as the user scrolls down.
+5. Elite Layout Structure: 
+   - A sticky glassmorphic Navigation bar with active design touches.
+   - A jaw-dropping Hero section with a massive bold emotional hook headline.
+   - An interactive floating Stats counter grid showcasing ratings, review totals, and trust metrics.
+   - A highly detailed Premium Services grid with beautiful modern hover scaling and micro-interactions.
+   - An immersive full-width customer Testimonials grid with gold five-star review badge highlights.
+   - A beautifully custom-styled, high-converting Contact Form with glowing input focus borders.
+   - An elegant detailed footer.
 
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
+    // سوییچ مستقیم به پرچمدار رسمی و زنده آنتروپیک (Claude 3.5 Sonnet)
     const response = await anthropic.messages.create({
-      model: "claude-3-5-haiku-latest", // نسخه جدید فعال و جایگزین شده
-      max_tokens: 3800,
+      model: "claude-3-5-sonnet-latest",
+      max_tokens: 4000, // افزایش توکن برای خروجی کامل‌تر، زیباتر و پرجزئیات‌تر سونات
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -90,15 +98,15 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Claude Generative Error:", error.message);
-    // قالب بک‌آپ شیک و تمیز در صورت بروز خطای کلاود
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a8ff78;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is compiling. Please reload in 5 seconds.</p></div></body></html>`;
+    console.error("🔴 Claude Sonnet Generative Error:", error.message);
+    // قالب بک‌آپی مدرن و شیک در صورت لیمیت بودن ناگهانی کلاود
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Production Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Sonnet Elite Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -212,5 +220,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Claude Premium Engine active on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Sonnet Engine active on port ${PORT}`));
 });
