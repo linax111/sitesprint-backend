@@ -54,7 +54,7 @@ async function initDB() {
 async function callAI(prompt, maxTokens = 1400) {
   try {
     const msg = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
+      model: "claude-3-5-haiku-latest",
       max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     });
