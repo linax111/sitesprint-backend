@@ -48,13 +48,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس متصل و ساختار جدول‌ها تایید شد.");
+    console.log("✅ Database synced successfully.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── IMAGE BANK (انبار عکس‌های لوکس و واقعی برای تزریق به هوش مصنوعی) ───────
+// ─── IMAGE BANK (انبار عکس‌های لوکس و واقعی برای تزریق) ───────────────────────
 function getIndustryImages(category) {
   const cat = (category || "business").toLowerCase();
   
@@ -66,7 +66,7 @@ function getIndustryImages(category) {
     g3: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80"
   };
 
-  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair")) {
+  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair") || cat.includes("nail")) {
     imgs = {
       hero: "https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1600&q=80",
       g1: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
@@ -98,52 +98,123 @@ function getIndustryImages(category) {
   return imgs;
 }
 
-// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
+// ─── ELITE LOCAL VISUAL ENGINE (سیستم بک‌آپ محلی) ─────────────────────────────
+function generateLocalMasterpiece(biz) {
+  const images = getIndustryImages(biz.category);
+  const cat = (biz.category || "business").toLowerCase();
+  
+  let accent = "#6366f1"; 
+  let gradient = "from-indigo-500 via-purple-500 to-pink-500";
+
+  if (cat.includes("salon") || cat.includes("beauty")) {
+    accent = "#ec4899"; gradient = "from-pink-500 via-rose-500 to-amber-500";
+  } else if (cat.includes("repair") || cat.includes("auto")) {
+    accent = "#0ea5e9"; gradient = "from-sky-500 via-blue-600 to-cyan-500";
+  } else if (cat.includes("rest") || cat.includes("food")) {
+    accent = "#f97316"; gradient = "from-amber-500 via-orange-500 to-red-600";
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${biz.name} | Premium Presentation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030307; color: #f8fafc; }
+        .heading-font { font-family: 'Space Grotesk', sans-serif; }
+        .glass-card { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.06); }
+    </style>
+</head>
+<body class="antialiased">
+    <section class="relative min-h-screen flex items-center justify-center pt-24 px-6">
+        <div class="absolute inset-0 z-0">
+            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#030307]/80 to-[#030307]"></div>
+            <img src="${images.hero}" class="w-full h-full object-cover opacity-60" alt="Hero Backdrop">
+        </div>
+        <div class="relative z-10 text-center max-w-4xl mx-auto">
+            <h1 class="heading-font text-5xl md:text-7xl font-extrabold text-white mt-6 tracking-tight">
+                Premium Solutions by <br><span class="text-transparent bg-clip-text bg-gradient-to-r ${gradient}">${biz.name}</span>
+            </h1>
+        </div>
+    </section>
+    
+    <section class="py-24 px-6 max-w-7xl mx-auto grid md:grid-cols-3 gap-6 relative z-10">
+        <img src="${images.g1}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 1">
+        <img src="${images.g2}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 2">
+        <img src="${images.g3}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 3">
+    </section>
+</body>
+</html>`;
+}
+
+// ─── AI PREMIUM HTML GENERATOR (مجهز به سیستم تزریق مستقیم عکس) ──────────────
 async function generatePremiumHTML(biz) {
-  // واکشی عکس‌های واقعی برای تزریق
   const images = getIndustryImages(biz.category);
 
-  const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
-Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
+  const prompt = `You are a world-class award-winning UI/UX web designer.
+Generate an incredibly stunning, ultra-modern single-page landing page for:
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address}
 Phone: ${biz.phone}
 Rating: ${biz.rating} (${biz.review_count} reviews)
-Hours: ${biz.hours}
 
-STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
-1. Immersive Color Palette: Dark mode experience tailored to the industry with neon glowing accents (luxury gold/rose for salons, electric cyan/midnight blue for auto repair, charcoal amber/crimson for restaurants, fresh emerald/mint for cleaning). Use glassmorphic cards (backdrop-filter: blur) and subtle smooth gradients.
-2. Jaw-Dropping Typography & Icons: Include FontAwesome icons CDN. Use elite Google Fonts (Space Grotesk or Syne for headings, Inter for body).
-3. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout containers.
-4. Elite Layout Structure: Sticky navigation bar, jaw-dropping Hero section, Services grid, visual Gallery, Testimonials, and Contact Form.
+STRICT DESIGN DIRECTION:
+1. Dark mode glassmorphism with neon glowing accents based on industry.
+2. Fluid Animations: Use AOS library (data-aos="fade-up").
+3. Elite Layout: Sticky Navbar, Hero section, Services grid, Visual Gallery, Testimonials, Contact Form. Include FontAwesome icons.
 
-⚠️ CRITICAL IMAGE RULE (DO NOT HALLUCINATE URLS):
-AI models often generate broken image links. YOU ARE STRICTLY FORBIDDEN from inventing or guessing image URLs. You MUST use exactly these real, working URLs for the images in the design:
-- For the Main Hero Background: ${images.hero}
-- For Gallery/Showcase Image 1: ${images.g1}
-- For Gallery/Showcase Image 2: ${images.g2}
-- For Gallery/Showcase Image 3: ${images.g3}
-Ensure these URLs are placed correctly in <img src="..."> tags or CSS background-images. Do not use placeholders.
+🚨 CRITICAL IMAGE RULE (DO NOT WRITE IMAGE URLS!):
+To prevent broken links, I have already pre-loaded the high-res images into CSS classes. YOU MUST NOT write any <img src="..."> tags.
+You MUST use these exact predefined CSS classes on <div> elements to show images:
+- For the Hero Section background container, you MUST add the class: 'bg-hero-img'
+- For the 3 Visual Gallery grid items, use exactly this structure:
+  <div class="gallery-img-1 rounded-2xl shadow-xl h-64 w-full"></div>
+  <div class="gallery-img-2 rounded-2xl shadow-xl h-64 w-full"></div>
+  <div class="gallery-img-3 rounded-2xl shadow-xl h-64 w-full"></div>
 
-Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no markdown blocks.`;
+Return ONLY the raw HTML/CSS/JS starting with <!DOCTYPE html>. No markdown blocks.`;
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let htmlContent = response.text();
+    let htmlContent = result.response.text().trim();
 
     if (!htmlContent) throw new Error("Empty response layer");
 
-    htmlContent = htmlContent.trim();
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
+    
+    // 💥 تزریق مستقیم تصاویر به استایل‌های هوش مصنوعی
+    const cssInjection = `
+    <style>
+      .bg-hero-img {
+        background-image: linear-gradient(rgba(3, 3, 7, 0.7), rgba(3, 3, 7, 0.95)), url('${images.hero}');
+        background-size: cover; 
+        background-position: center;
+      }
+      .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; }
+      .gallery-img-2 { background-image: url('${images.g2}'); background-size: cover; background-position: center; }
+      .gallery-img-3 { background-image: url('${images.g3}'); background-size: cover; background-position: center; }
+    </style>
+    </head>`;
+
+    if (htmlContent.includes("</head>")) {
+      htmlContent = htmlContent.replace("</head>", cssInjection);
+    } else {
+      // در صورتی که جمینای تگ head را به شکل دیگری بست
+      htmlContent += cssInjection.replace("</head>", ""); 
+    }
     
     return htmlContent.trim();
   } catch (error) {
     console.error("⚠️ AI Engine Error:", error.message);
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Presentation is syncing. Please reload.</p></div></body></html>`;
+    return generateLocalMasterpiece(biz);
   }
 }
 
