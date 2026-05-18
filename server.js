@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const { GoogleGenerativeAI } = require("@google/generative-ai"); // استفاده از SDK رسمی و پایدار گوگل
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app  = express();
 const pool = new Pool({
@@ -13,7 +13,7 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی هوش مصنوعی گوگل با پکیج رسمی و کلید شما در ریلوای
+// راه‌اندازی هوش مصنوعی گوگل با پکیج رسمی
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ async function initDB() {
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (موتور ۱۰۰٪ پایدار با پکیج رسمی گوگل) ──────────────
+// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are a world-class award-winning UI/UX web designer and front-end developer.
 Generate an incredibly stunning, ultra-modern, elite single-page landing page for this local business:
@@ -71,20 +71,17 @@ STRICT DESIGN DIRECTION (Make it look like a $5,000 custom agency website):
 2. Jaw-Dropping Typography & Icons: Include FontAwesome icons CDN. Use elegant Google Fonts (e.g., Space Grotesk, Syne, or Playfair Display for headings; clean Inter or Montserrat for body).
 3. Ultra High-Quality Real Visuals: Integrate stunning, high-resolution background and gallery images using source URLs from Unsplash that perfectly and realistically match the exact business type.
 4. Fluid Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Apply 'data-aos="fade-up"' to layout containers, service boxes, and headers so the entire page animates beautifully as the user scrolls down.
-5. Elite Layout Structure: 
-   - A sticky glassmorphic Navigation bar with active design touches.
-   - A jaw-dropping Hero section with a massive bold emotional hook headline.
-   - An interactive floating Stats counter grid showcasing ratings, review totals, and trust metrics.
-   - A highly detailed Premium Services grid with beautiful modern hover scaling and micro-interactions.
-   - An immersive full-width customer Testimonials grid with gold five-star review badge highlights.
-   - A beautifully custom-styled, high-converting Contact Form with glowing input focus borders.
-   - An elegant detailed footer.
+5. Elite Layout Structure: Fixed glassmorphic navbar, jaw-dropping Hero, interactive floating Stats counter grid, highly detailed Premium Services grid, immersive customer Testimonials grid, custom-styled functional Contact Form, and an elegant footer.
 
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // صدا زدن مدل از طریق ساختار کاملاً تایید شده و بومی SDK گوگل
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // 💥 شلیک نهایی: اجبار پکیج رسمی به استفاده از ورژن پایدار v1 با ارسال کانفیگ آپشنز
+    const model = genAI.getGenerativeModel(
+      { model: "gemini-1.5-flash" },
+      { apiVersion: "v1" } // این خط دقیقاً پکیج را مجبور می‌کند v1beta خراب را کنار بگذارد
+    );
+    
     const result = await model.generateContent(prompt);
     const response = await result.response;
     let htmlContent = response.text();
@@ -100,7 +97,6 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Gemini SDK Engine Error:", error.message);
-    // لایوت لوکال بک‌آپی شیک جهت بالا ماندن فرانت‌اَند در شرایط اضطراری
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
