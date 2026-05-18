@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const Anthropic = require("@anthropic-ai/sdk");
+const { GoogleGenAI } = require("@google/genai"); // استفاده از پکیج رسمی و پایدار گوگل
 
 const app  = express();
 const pool = new Pool({
@@ -13,10 +13,8 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با کلید اصلی شما
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY || process.env.GEMINI_API_KEY,
-});
+// راه‌اندازی هوش مصنوعی گوگل با متغیری که در ریلوای داری
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -51,13 +49,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس با موفقیت متصل و همگام شد.");
+    console.log("✅ دیتابیس آماده و همگام است.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
+// ─── AI PREMIUM HTML GENERATOR (موتور جدید قدرت گرفته از جمینای گوگل) ──────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an expert award-winning UI/UX web designer. 
 Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
@@ -78,28 +76,32 @@ STRICT VISUAL & TECHNICAL REQUIREMENTS:
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022", 
-      max_tokens: 3500,
-      messages: [{ role: "user", content: prompt }],
+    // صدا زدن مدل فوق‌العاده پایدار و سریع گوگل
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: prompt,
     });
 
-    let htmlContent = response.content[0].text.trim();
+    if (!response.text) {
+      throw new Error("No response text from Gemini");
+    }
+
+    let htmlContent = response.text.trim();
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Claude AI Error, triggering fallback:", error);
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#00cfff;font-size:3rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload this page in a few seconds.</p></div></body></html>`;
+    console.error("🔴 Gemini AI Error, triggering safety fallback layout:", error);
+    // ساختار بک‌آپی شیک‌تر که اگر گوگل هم لیمیت بود، لایوت معتبری نشان داده شود
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a3e635;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is compiling. Please refresh this page in 3 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Premium AI Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Gemini Premium Engine" }));
 
-// روت کمکی برای گرفتن کل لیست بیزینس‌ها
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
   let sql = "SELECT * FROM businesses WHERE 1=1";
@@ -111,7 +113,6 @@ app.get("/api/businesses", async (req, res) => {
   res.json(result.rows);
 });
 
-// ثبت مستقیم بیزینس جدید از فرانت‌اند
 app.post("/api/businesses", async (req, res) => {
   try {
     const b = req.body;
@@ -148,7 +149,6 @@ app.delete("/api/businesses/:id", async (req, res) => {
   res.json({ deleted: true });
 });
 
-// جستجوی آفلاین سریع محلی
 app.post("/api/search", async (req, res) => {
   const { area } = req.body;
   if (!area) return res.status(400).json({ error: "area required" });
@@ -163,16 +163,12 @@ app.post("/api/search", async (req, res) => {
   res.json(localMockData);
 });
 
-// ─── GENERATE PREMIUM SITE (بازنویسی هوشمند برای خنثی کردن باگ آدرس فرانت‌اَند) ───
-// این روت هم /api/generate/:id و هم /generate/:id را همزمان هندل میکند تا ۴۰۴ کاملا ریشه‌کن شود
 const generateHandler = async (req, res) => {
   try {
     const { id } = req.params;
-    
     let biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
     
     if (!biz.rows.length) {
-      // اگر به هر دلیلی آیدی مستقیم پیدا نشد، از دیتای ارسالی بدنه فرانت‌اند برای ساخت خودکار استفاده میکنیم
       const b = req.body;
       const insertResult = await pool.query(
         `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, status, area_searched)
@@ -194,7 +190,6 @@ const generateHandler = async (req, res) => {
     );
 
     await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
-    
     res.json({ url: `/preview/${slug}`, slug });
   } catch (err) {
     console.error("🔴 Generation Route Error:", err);
@@ -202,12 +197,9 @@ const generateHandler = async (req, res) => {
   }
 };
 
-// ثبت روت دوگانه برای تضمین ۱۰۰ درصدی عدم وقوع ۴۰۴
 app.post("/api/generate/:id", generateHandler);
 app.post("/generate/:id", generateHandler);
 
-
-// روت نمایش پیش‌نمایش سایت‌های ساخته شده
 app.get("/preview/:slug", async (req, res) => {
   try {
     const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
@@ -223,8 +215,4 @@ app.get("/preview/:slug", async (req, res) => {
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
   app.listen(PORT, () => console.log(`🚀 Premium Engine running on port ${PORT}`));
-});
-app.post("/api/build-site", (req, res) => {
-  req.params = { id: req.body.id };
-  res.redirect(307, `/api/generate/${req.body.id}`);
 });
