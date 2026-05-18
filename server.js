@@ -1,4 +1,5 @@
 require("dotenv").config();
+const cors = require('cors');
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
@@ -12,6 +13,7 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+app.use(cors());
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
