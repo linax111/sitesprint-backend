@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai"); // سوییچ به پکیج ۱۰۰٪ پایدار و سنتی گوگل
 
 const app  = express();
 const pool = new Pool({
@@ -13,8 +13,8 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// مقداردهی اولیه پکیج هوش مصنوعی گوگل
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// راه‌اندازی هوش مصنوعی گوگل با پکیج پایدار
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -49,13 +49,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس متصل و آماده است.");
+    console.log("✅ دیتابیس آماده و تایید شد.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (اصلاح نحوه دریافت خروجی) ───────────────────────
+// ─── AI PREMIUM HTML GENERATOR (تضمینی و بدون خطای پکیج) ────────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an expert award-winning UI/UX web designer. 
 Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
@@ -76,21 +76,14 @@ STRICT VISUAL & TECHNICAL REQUIREMENTS:
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: prompt,
-    });
-
-    // استخراج ایمن متن خروجی بر اساس ساختار پکیج جدید گوگل
-    let htmlContent = "";
-    if (response && response.text) {
-      htmlContent = response.text;
-    } else if (response && response.candidates && response.candidates[0]?.content?.parts[0]?.text) {
-      htmlContent = response.candidates[0].content.parts[0].text;
-    }
+    // استفاده از متد سنتی و فوق‌العاده پایدار گوگل بدون ارورهای پکیج جدید
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let htmlContent = response.text();
 
     if (!htmlContent) {
-      throw new Error("Gemini returned an empty response layout.");
+      throw new Error("Gemini returned empty text response.");
     }
 
     htmlContent = htmlContent.trim();
@@ -99,15 +92,15 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Gemini Parsing Error, running clean fallback:", error);
-    // یک قالب ساده موقت برای اینکه اگر کلید شما خطای سهمیه داد صفحه خالی نماند
+    console.error("🔴 Gemini Stable Engine Error:", error);
+    // ساختار استاتیک شیک بک‌آپ که اگر کلید منقضی بود پروژه ارور ندهد
     return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#10b981;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please refresh in a few seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Gemini Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Stable Gemini Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -221,5 +214,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Premium Engine running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Stable Premium Engine running on port ${PORT}`));
 });
