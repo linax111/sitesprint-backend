@@ -13,7 +13,7 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با کلید اصلی
+// راه‌اندازی کلاود با کلید اصلی شما
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_KEY || process.env.GEMINI_API_KEY,
 });
@@ -51,13 +51,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس آماده و ستون‌ها تایید شدند.");
+    console.log("✅ دیتابیس با موفقیت متصل و همگام شد.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI SITE BUILDER (کدهای پرامپت خفن و اصلاح مدل کلود) ──────────────────────
+// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an expert award-winning UI/UX web designer. 
 Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
@@ -69,16 +69,15 @@ Rating: ${biz.rating} (${biz.review_count} reviews)
 Hours: ${biz.hours}
 
 STRICT VISUAL & TECHNICAL REQUIREMENTS:
-1. Modern Immersive Aesthetic: Create a premium web presence. Use deep dark modes with glowing vibrant neon accents tailored to the industry (e.g., electric blue/cyan for auto, luxury gold/rose-pastel for salons, warm amber for restaurants). Use beautiful glassmorphic elements (backdrop-filter: blur).
-2. High-Quality Real Images: Integrate dynamic, un-cropped background and section images using high-resolution Unsplash source URLs that fit the business category perfectly (e.g., clean modern car workshops, cinematic styling chairs, delicious fresh close-up food shots).
-3. Smooth Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Add 'data-aos="fade-up"' or 'data-aos="zoom-in"' attributes to all main cards, headers, and sections so the entire page beautifully animates as the user scrolls.
-4. Modern Icons & Typography: Include FontAwesome CDN for modern vector icons. Use premium combinations of Google Fonts (e.g., Space Grotesk for headers, Inter for clean body copy).
-5. Layout Structure: Immersive Hero with a bold emotional tagline, floating Stats Counter, a grid of core Premium Services with vibrant hover transformations, a beautiful full-width interactive Testimonial slider, an elegant fully-styled contact form, and a premium clean footer.
+1. Modern Immersive Aesthetic: Use deep dark modes with glowing vibrant neon accents tailored to the industry (e.g., electric blue/cyan for auto, luxury gold/rose-pastel for salons, warm amber for restaurants). Use beautiful glassmorphic elements (backdrop-filter: blur).
+2. High-Quality Real Images: Integrate dynamic background and section images using high-resolution Unsplash source URLs that fit the business category perfectly.
+3. Smooth Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Add 'data-aos="fade-up"' to elements so they animate beautifully on scroll.
+4. Modern Icons & Typography: Include FontAwesome CDN for icons. Use premium combinations of Google Fonts (e.g., Space Grotesk and Inter).
+5. Layout Structure: Immersive Hero, floating Stats Counter, a grid of core Premium Services, full-width Testimonial section, fully-styled contact form, and premium footer.
 
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // تغییر نام مدل به آخرین نسخه رسمی و پایدار برای عبور از ارور 404
     const response = await anthropic.messages.create({
       model: "claude-3-5-haiku-20241022", 
       max_tokens: 3500,
@@ -86,16 +85,13 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     });
 
     let htmlContent = response.content[0].text.trim();
-    
-    // پاکسازی کامل تگ‌های مارک‌داون احتمالی کلود
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Claude AI Error, triggering smart fallback:", error);
-    // بک‌آپ لوکس سرور در صورت شلوغی شبکه کلاود تا فرانت‌اند هرگز ارور ندهد
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#00cfff;font-size:3rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload this preview page in a few seconds.</p></div></body></html>`;
+    console.error("🔴 Claude AI Error, triggering fallback:", error);
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#00cfff;font-size:3rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload this page in a few seconds.</p></div></body></html>`;
   }
 }
 
@@ -103,6 +99,7 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
 
 app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Premium AI Engine" }));
 
+// روت کمکی برای گرفتن کل لیست بیزینس‌ها
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
   let sql = "SELECT * FROM businesses WHERE 1=1";
@@ -112,6 +109,43 @@ app.get("/api/businesses", async (req, res) => {
   sql += " ORDER BY created_at DESC";
   const result = await pool.query(sql, params);
   res.json(result.rows);
+});
+
+// ثبت مستقیم بیزینس جدید از فرانت‌اند
+app.post("/api/businesses", async (req, res) => {
+  try {
+    const b = req.body;
+    const r = await pool.query(
+      `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,website,google_url,status,area_searched)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [b.name, b.address||"", b.phone||"", b.category||"", b.rating||0, b.review_count||0,
+       b.hours||"", b.website||"", b.google_url||"", b.status||"prospect", b.area_searched||""]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/businesses/:id", async (req, res) => {
+  const { id } = req.params;
+  const b = req.body;
+  const allowed = ["name","address","phone","category","rating","review_count","hours","website","google_url","status","notes","preview_slug"];
+  const sets = []; const params = [];
+  for (const col of allowed) {
+    if (col in b) { sets.push(`${col}=$${params.length+1}`); params.push(b[col]); }
+  }
+  if (!sets.length) return res.json({ ok: true });
+  sets.push(`updated_at=NOW()`);
+  params.push(id);
+  await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${params.length}`, params);
+  const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
+  res.json(r.rows[0]);
+});
+
+app.delete("/api/businesses/:id", async (req, res) => {
+  await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
+  res.json({ deleted: true });
 });
 
 // جستجوی آفلاین سریع محلی
@@ -129,19 +163,21 @@ app.post("/api/search", async (req, res) => {
   res.json(localMockData);
 });
 
-// ─── GENERATE PREMIUM SITE (اصلاح کامل مسیر آدرس دهی برای رفع ۴۰۴) ──────────────
-app.post("/api/generate/:id", async (req, res) => {
+// ─── GENERATE PREMIUM SITE (بازنویسی هوشمند برای خنثی کردن باگ آدرس فرانت‌اَند) ───
+// این روت هم /api/generate/:id و هم /generate/:id را همزمان هندل میکند تا ۴۰۴ کاملا ریشه‌کن شود
+const generateHandler = async (req, res) => {
   try {
     const { id } = req.params;
-    const b = req.body;
     
     let biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
     
     if (!biz.rows.length) {
+      // اگر به هر دلیلی آیدی مستقیم پیدا نشد، از دیتای ارسالی بدنه فرانت‌اند برای ساخت خودکار استفاده میکنیم
+      const b = req.body;
       const insertResult = await pool.query(
-        `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, website, google_url, status, area_searched)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-        [b.name || "Business", b.address || "", b.phone || "", b.category || "", b.rating || 5, b.review_count || 50, b.hours || "", b.website || "", b.google_url || "", "prospect", b.area_searched || ""]
+        `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, status, area_searched)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [b.name || "Business", b.address || "", b.phone || "", b.category || "", b.rating || 5, b.review_count || 50, b.hours || "", "prospect", b.area_searched || ""]
       );
       biz = insertResult;
     }
@@ -158,28 +194,33 @@ app.post("/api/generate/:id", async (req, res) => {
     );
 
     await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
-
-    // ساخت خودکار بیس آدرس داینامیک بر اساس رکوئست دریافتی فرانت‌اند تا ۴۰۴ ندهد
-    const host = req.get("host");
-    const protocol = req.protocol;
-    const previewUrl = `${protocol}://${host}/preview/${slug}`;
     
-    res.json({ url: previewUrl, slug });
+    res.json({ url: `/preview/${slug}`, slug });
   } catch (err) {
     console.error("🔴 Generation Route Error:", err);
     res.status(500).json({ error: err.message });
   }
-});
+};
 
+// ثبت روت دوگانه برای تضمین ۱۰۰ درصدی عدم وقوع ۴۰۴
+app.post("/api/generate/:id", generateHandler);
+app.post("/generate/:id", generateHandler);
+
+
+// روت نمایش پیش‌نمایش سایت‌های ساخته شده
 app.get("/preview/:slug", async (req, res) => {
-  const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
-  if (!r.rows.length) return res.status(404).send("Site not found");
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(r.rows[0].html);
+  try {
+    const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
+    if (!r.rows.length) return res.status(404).send("Site not found");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(r.rows[0].html);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
 });
 
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log("🚀 Premium SiteSprint Engine running successfully..."));
+  app.listen(PORT, () => console.log(`🚀 Premium Engine running on port ${PORT}`));
 });
