@@ -13,7 +13,7 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با کلید معتبر شما در ریلوای
+// راه‌اندازی کلاود با متغیر رسمی آنتروپیک
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_KEY
 });
@@ -51,13 +51,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس آماده و متصل است.");
+    console.log("✅ Database initialized successfully.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (موتور کلاود با لاگ دقیق ارور) ───────────────────
+// ─── AI PREMIUM HTML GENERATOR ───────────────────────────────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an elite, award-winning UI/UX web designer. 
 Generate an incredibly stunning, high-converting, and bespoke single-page landing page for this local business:
@@ -79,7 +79,7 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
+      model: "claude-3-5-haiku-latest", // نسخه جدید فعال و جایگزین شده
       max_tokens: 3800,
       messages: [{ role: "user", content: prompt }],
     });
@@ -90,17 +90,15 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely n
     
     return htmlContent.trim();
   } catch (error) {
-    // 💥 کدهای جدید مانیتورینگ برای به دام انداختن علت رد درخواست کلاود:
-    console.error("🔴 CLAUDE RAW ERROR DETAILS:", JSON.stringify(error, null, 2));
-    console.error("🔴 ERROR MESSAGE:", error.message);
-    
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a8ff78;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is updating. Please reload in 5 seconds.</p></div></body></html>`;
+    console.error("🔴 Claude Generative Error:", error.message);
+    // قالب بک‌آپ شیک و تمیز در صورت بروز خطای کلاود
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a8ff78;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is compiling. Please reload in 5 seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Log-Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Premium Production Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -214,5 +212,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Claude Premium Engine active on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Claude Premium Engine active on port ${PORT}`));
 });
