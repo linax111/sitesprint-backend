@@ -13,9 +13,9 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با متغیر موجود در ریلوای
+// راه‌اندازی کلاود با کلید اصلی
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY || process.env.GEMINI_API_KEY, // انعطاف‌پذیر برای کلیدها
+  apiKey: process.env.ANTHROPIC_KEY || process.env.GEMINI_API_KEY,
 });
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
@@ -51,16 +51,16 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ DB Connected & Verified.");
+    console.log("✅ دیتابیس آماده و ستون‌ها تایید شدند.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI SITE BUILDER (موتور اصلی تولید سایت خفن توسط کلاود) ──────────────────────
+// ─── AI SITE BUILDER (کدهای پرامپت خفن و اصلاح مدل کلود) ──────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an expert award-winning UI/UX web designer. 
-Generate a stunning, high-converting, single-page landing page for this local business:
+Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address}
@@ -68,34 +68,34 @@ Phone: ${biz.phone}
 Rating: ${biz.rating} (${biz.review_count} reviews)
 Hours: ${biz.hours}
 
-STRICT DESIGN REQUIREMENTS:
-1. Modern Tech/Premium aesthetic tailored to the industry (e.g., dark cyber mode for auto repair, luxury editorial pastel for salons, warm immersive for restaurants).
-2. Use Unsplash URLs for backgrounds and images that match the category perfectly (e.g., https://images.unsplash.com/photo-... for auto glass, pizza, hair cutting).
-3. Include smooth animations. Include AOS (Animate On Scroll) library via CDN and add data-aos attributes (\`data-aos="fade-up"\`, \`data-aos="zoom-in"\`) to sections and cards so elements animate beautifully on scroll.
-4. Include FontAwesome CDN for modern icons.
-5. Create an interactive feel: glassmorphism navigation, dynamic hover states on buttons, glowing accents, premium fonts (Google Fonts like Montserrat, Playfair Display, or Space Grotesk).
-6. Content sections: Hero with bold tagline, Stats Counter, Services Grid, Beautiful Interactive Testimonials, Contact Section with a working styled form, and Footer.
+STRICT VISUAL & TECHNICAL REQUIREMENTS:
+1. Modern Immersive Aesthetic: Create a premium web presence. Use deep dark modes with glowing vibrant neon accents tailored to the industry (e.g., electric blue/cyan for auto, luxury gold/rose-pastel for salons, warm amber for restaurants). Use beautiful glassmorphic elements (backdrop-filter: blur).
+2. High-Quality Real Images: Integrate dynamic, un-cropped background and section images using high-resolution Unsplash source URLs that fit the business category perfectly (e.g., clean modern car workshops, cinematic styling chairs, delicious fresh close-up food shots).
+3. Smooth Animations: Include the AOS (Animate on Scroll) CSS and JS library via CDN. Add 'data-aos="fade-up"' or 'data-aos="zoom-in"' attributes to all main cards, headers, and sections so the entire page beautifully animates as the user scrolls.
+4. Modern Icons & Typography: Include FontAwesome CDN for modern vector icons. Use premium combinations of Google Fonts (e.g., Space Grotesk for headers, Inter for clean body copy).
+5. Layout Structure: Immersive Hero with a bold emotional tagline, floating Stats Counter, a grid of core Premium Services with vibrant hover transformations, a beautiful full-width interactive Testimonial slider, an elegant fully-styled contact form, and a premium clean footer.
 
-Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No explanations, no markdown code blocks.`;
+Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
+    // تغییر نام مدل به آخرین نسخه رسمی و پایدار برای عبور از ارور 404
     const response = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307", // استفاده از نسخه رسمی هایکو که برای حساب شما ۱۰۰٪ مجاز و فعال است
+      model: "claude-3-5-haiku-20241022", 
       max_tokens: 3500,
       messages: [{ role: "user", content: prompt }],
     });
 
     let htmlContent = response.content[0].text.trim();
     
-    // پاکسازی تمیز اگر کلاود تگ‌های مارک‌داون فرستاده بود
+    // پاکسازی کامل تگ‌های مارک‌داون احتمالی کلود
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Claude Premium Generation Error, falling back to basic layout:", error);
-    // اگر کلاود به هر دلیلی لیمیت بود، سیستم کرش نمی‌کند و یک قالب بک‌آپ شیک رندر می‌کند
-    return `<!DOCTYPE html><html lang="en"><head><title>${biz.name}</title><style>body{background:#0a0a0a;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh} h1{color:#e879f9}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is compiling. Please refresh in a few moments.</p></div></body></html>`;
+    console.error("🔴 Claude AI Error, triggering smart fallback:", error);
+    // بک‌آپ لوکس سرور در صورت شلوغی شبکه کلاود تا فرانت‌اند هرگز ارور ندهد
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#00cfff;font-size:3rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please reload this preview page in a few seconds.</p></div></body></html>`;
   }
 }
 
@@ -114,7 +114,7 @@ app.get("/api/businesses", async (req, res) => {
   res.json(result.rows);
 });
 
-// ─── SEARCH (آفلاین و پرسرعت) ─────────────────────────────────────────────────
+// جستجوی آفلاین سریع محلی
 app.post("/api/search", async (req, res) => {
   const { area } = req.body;
   if (!area) return res.status(400).json({ error: "area required" });
@@ -129,7 +129,7 @@ app.post("/api/search", async (req, res) => {
   res.json(localMockData);
 });
 
-// ─── GENERATE AI PREMIUM SITE ──────────────────────────────────────────────────
+// ─── GENERATE PREMIUM SITE (اصلاح کامل مسیر آدرس دهی برای رفع ۴۰۴) ──────────────
 app.post("/api/generate/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -147,8 +147,6 @@ app.post("/api/generate/:id", async (req, res) => {
     }
 
     const currentBiz = biz.rows[0];
-    
-    // کلاود فعال شده و سایت فوق‌العاده لوکس را متناسب با صنف طراحی می‌کند
     const html = await generatePremiumHTML(currentBiz);
     const slug = `${currentBiz.id}-${Date.now()}`;
 
@@ -161,10 +159,14 @@ app.post("/api/generate/:id", async (req, res) => {
 
     await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
 
-    const previewUrl = `${process.env.BASE_URL || ""}/preview/${slug}`;
+    // ساخت خودکار بیس آدرس داینامیک بر اساس رکوئست دریافتی فرانت‌اند تا ۴۰۴ ندهد
+    const host = req.get("host");
+    const protocol = req.protocol;
+    const previewUrl = `${protocol}://${host}/preview/${slug}`;
+    
     res.json({ url: previewUrl, slug });
   } catch (err) {
-    console.error("🔴 Generation Error:", err);
+    console.error("🔴 Generation Route Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -179,5 +181,5 @@ app.get("/preview/:slug", async (req, res) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log("🚀 Premium SiteSprint Engine running..."));
+  app.listen(PORT, () => console.log("🚀 Premium SiteSprint Engine running successfully..."));
 });
