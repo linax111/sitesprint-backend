@@ -11,6 +11,7 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
   await pool.query(`
@@ -28,6 +29,7 @@ async function initDB() {
       status       TEXT DEFAULT 'prospect',
       notes        TEXT DEFAULT '',
       area_searched TEXT DEFAULT '',
+      preview_slug  TEXT DEFAULT '',
       created_at   TIMESTAMPTZ DEFAULT NOW(),
       updated_at   TIMESTAMPTZ DEFAULT NOW()
     );
@@ -42,7 +44,7 @@ async function initDB() {
   console.log("✅ DB ready");
 }
 
-// ─── AI CALL ─────────────────────────────────────────────────────────────────
+// ─── AI CALL (اصلاح شده و استاندارد) ──────────────────────────────────────────
 async function callAI(prompt, maxTokens = 1400) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -52,13 +54,23 @@ async function callAI(prompt, maxTokens = 1400) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-3-5-sonnet-20241022", // نام مدل کاملاً اصلاح شد
       max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     }),
   });
+
   const data = await res.json();
-  if (!data.content?.[0]?.text) throw new Error(JSON.stringify(data));
+  
+  if (data.error) {
+    console.error("🔴 Anthropic API Error:", data.error);
+    throw new Error(data.error.message);
+  }
+
+  if (!data.content?.[0]?.text) {
+    throw new Error("No response text from Claude");
+  }
+
   return data.content[0].text;
 }
 
@@ -230,10 +242,8 @@ footer{border-top:1px solid rgba(255,255,255,.07);padding:1.8rem 5%;text-align:c
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-// Health check
 app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint API" }));
 
-// LIST businesses
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
   let sql = "SELECT * FROM businesses WHERE 1=1";
@@ -245,7 +255,6 @@ app.get("/api/businesses", async (req, res) => {
   res.json(result.rows);
 });
 
-// CREATE business
 app.post("/api/businesses", async (req, res) => {
   const b = req.body;
   const r = await pool.query(
@@ -257,7 +266,6 @@ app.post("/api/businesses", async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-// UPDATE business
 app.put("/api/businesses/:id", async (req, res) => {
   const { id } = req.params;
   const b = req.body;
@@ -274,30 +282,32 @@ app.put("/api/businesses/:id", async (req, res) => {
   res.json(r.rows[0]);
 });
 
-// DELETE business
 app.delete("/api/businesses/:id", async (req, res) => {
   await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
   res.json({ deleted: true });
 });
 
-// AREA SEARCH (AI)
 app.post("/api/search", async (req, res) => {
-  const { area } = req.body;
-  if (!area) return res.status(400).json({ error: "area required" });
+  try {
+    const { area } = req.body;
+    if (!area) return res.status(400).json({ error: "area required" });
 
-  const prompt = `Generate a realistic list of 10 small independent local businesses in "${area}" that do NOT have a professional website. Mix categories: auto repair, salons, ethnic restaurants, cleaning, landscaping, tutoring, etc. No national chains.
+    const prompt = `Generate a realistic list of 10 small independent local businesses in "${area}" that do NOT have a professional website. Mix categories: auto repair, salons, ethnic restaurants, cleaning, landscaping, tutoring, etc. No national chains.
 
 Return ONLY valid JSON array (no markdown):
 [{"name":"","address":"","phone":"","category":"","rating":4.5,"review_count":80,"hours":"Mon-Fri 9AM-6PM","reason":"Only Google listing found, no website"}]
 
 Make names, addresses, and phone numbers realistic for that specific area.`;
 
-  const text   = await callAI(prompt);
-  const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-  res.json(parsed);
+    const text   = await callAI(prompt);
+    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+    res.json(parsed);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GENERATE site for a business
 app.post("/api/generate/:id", async (req, res) => {
   const { id } = req.params;
   const biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
@@ -309,18 +319,15 @@ app.post("/api/generate/:id", async (req, res) => {
   await pool.query(
     `INSERT INTO generated_sites (business_id, slug, html)
      VALUES ($1,$2,$3)
-     ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
-    [id, slug, html]
+     ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`
   );
 
-  // Save slug reference on business
   await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, id]);
 
   const previewUrl = `${process.env.BASE_URL || ""}/preview/${slug}`;
   res.json({ url: previewUrl, slug });
 });
 
-// SERVE generated site — this IS the public preview link
 app.get("/preview/:slug", async (req, res) => {
   const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
   if (!r.rows.length) return res.status(404).send("Site not found");
