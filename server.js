@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
+const Anthropic = require("@anthropic-ai/sdk"); // اضافه شدن پکیج رسمی
 
 const app  = express();
 const pool = new Pool({
@@ -11,6 +12,11 @@ const pool = new Pool({
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+
+// راه‌اندازی SDK کلاود با کلید شما
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_KEY,
+});
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -44,34 +50,24 @@ async function initDB() {
   console.log("✅ DB ready");
 }
 
-// ─── AI CALL (اصلاح شده و استاندارد) ──────────────────────────────────────────
+// ─── AI CALL (کاملاً با SDK رسمی بازنویسی شد) ──────────────────────────────────
 async function callAI(prompt, maxTokens = 1400) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-3-5-sonnet-20241022", // نام مدل کاملاً اصلاح شد
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20241022",
       max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
-    }),
-  });
+    });
 
-  const data = await res.json();
-  
-  if (data.error) {
-    console.error("🔴 Anthropic API Error:", data.error);
-    throw new Error(data.error.message);
+    if (!msg.content || msg.content.length === 0) {
+      throw new Error("No content received from Anthropic");
+    }
+
+    return msg.content[0].text;
+  } catch (error) {
+    console.error("🔴 Anthropic SDK Error:", error);
+    throw error;
   }
-
-  if (!data.content?.[0]?.text) {
-    throw new Error("No response text from Claude");
-  }
-
-  return data.content[0].text;
 }
 
 // ─── SITE GENERATOR ───────────────────────────────────────────────────────────
