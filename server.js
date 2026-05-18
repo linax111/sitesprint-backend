@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const { GoogleGenAI } = require("@google/genai"); // استفاده از پکیج رسمی و پایدار گوگل
+const { GoogleGenAI } = require("@google/genai");
 
 const app  = express();
 const pool = new Pool({
@@ -13,7 +13,7 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی هوش مصنوعی گوگل با متغیری که در ریلوای داری
+// مقداردهی اولیه پکیج هوش مصنوعی گوگل
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
@@ -49,13 +49,13 @@ async function initDB() {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log("✅ دیتابیس آماده و همگام است.");
+    console.log("✅ دیتابیس متصل و آماده است.");
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── AI PREMIUM HTML GENERATOR (موتور جدید قدرت گرفته از جمینای گوگل) ──────────
+// ─── AI PREMIUM HTML GENERATOR (اصلاح نحوه دریافت خروجی) ───────────────────────
 async function generatePremiumHTML(biz) {
   const prompt = `You are an expert award-winning UI/UX web designer. 
 Generate an incredibly stunning, ultra-modern, high-converting single-page landing page for this local business:
@@ -76,31 +76,38 @@ STRICT VISUAL & TECHNICAL REQUIREMENTS:
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Absolutely no explanations, no chat commentary, and no markdown code blocks.`;
 
   try {
-    // صدا زدن مدل فوق‌العاده پایدار و سریع گوگل
     const response = await ai.models.generateContent({
       model: "gemini-1.5-flash",
       contents: prompt,
     });
 
-    if (!response.text) {
-      throw new Error("No response text from Gemini");
+    // استخراج ایمن متن خروجی بر اساس ساختار پکیج جدید گوگل
+    let htmlContent = "";
+    if (response && response.text) {
+      htmlContent = response.text;
+    } else if (response && response.candidates && response.candidates[0]?.content?.parts[0]?.text) {
+      htmlContent = response.candidates[0].content.parts[0].text;
     }
 
-    let htmlContent = response.text.trim();
+    if (!htmlContent) {
+      throw new Error("Gemini returned an empty response layout.");
+    }
+
+    htmlContent = htmlContent.trim();
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("🔴 Gemini AI Error, triggering safety fallback layout:", error);
-    // ساختار بک‌آپی شیک‌تر که اگر گوگل هم لیمیت بود، لایوت معتبری نشان داده شود
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#a3e635;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is compiling. Please refresh this page in 3 seconds.</p></div></body></html>`;
+    console.error("🔴 Gemini Parsing Error, running clean fallback:", error);
+    // یک قالب ساده موقت برای اینکه اگر کلید شما خطای سهمیه داد صفحه خالی نماند
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#0b0f19;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#10b981;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Premium presentation is syncing. Please refresh in a few seconds.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Gemini Premium Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Gemini Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
