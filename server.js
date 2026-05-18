@@ -13,12 +13,11 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// راه‌اندازی کلاود با کلید شما
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_KEY
 });
 
-// ─── DB INIT & MODEL RADAR ───────────────────────────────────────────────────
+// ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
   try {
     await pool.query(`
@@ -52,22 +51,12 @@ async function initDB() {
       );
     `);
     console.log("✅ Database synced successfully.");
-
-    // 📡 رادار مدل‌های آنتروپیک: چاپ لیست مدل‌های مجاز برای کلید شما در لاگ ریلوای
-    try {
-      const models = await anthropic.models.list();
-      const modelNames = models.data.map(m => m.id).join("\n- ");
-      console.log("🟢 AVAILABLE CLAUDE MODELS FOR YOUR API KEY:\n- " + modelNames);
-    } catch (apiErr) {
-      console.log("⚠️ Could not fetch model list. Check API Key validity.");
-    }
-
   } catch (err) {
     console.error("❌ DB Init Error:", err);
   }
 }
 
-// ─── IMAGE BANK (انبار عکس‌های لوکس برای تزریق به طراحی کلاود) ───────────────
+// ─── IMAGE BANK (انبار عکس‌های لوکس برای تزریق) ───────────────────────────────
 function getIndustryImages(category) {
   const cat = (category || "business").toLowerCase();
   
@@ -103,15 +92,21 @@ function getIndustryImages(category) {
   return imgs;
 }
 
-// ─── ELITE LOCAL VISUAL ENGINE (سیستم بک‌آپ محلی در صورت قطعی) ───────────────
+// ─── FULL LOCAL BACKUP TEMPLATE (قالب فوق‌کامل و فول‌آپشن محلی) ───────────────
 function generateLocalMasterpiece(biz) {
   const images = getIndustryImages(biz.category);
   const cat = (biz.category || "business").toLowerCase();
   
-  let gradient = "from-indigo-500 via-purple-500 to-pink-500";
-  if (cat.includes("salon") || cat.includes("beauty")) gradient = "from-pink-500 via-rose-500 to-amber-500";
-  else if (cat.includes("repair") || cat.includes("auto")) gradient = "from-sky-500 via-blue-600 to-cyan-500";
-  else if (cat.includes("rest") || cat.includes("food")) gradient = "from-amber-500 via-orange-500 to-red-600";
+  let gradient = "from-indigo-500 to-blue-500";
+  let btnColor = "bg-indigo-600 hover:bg-indigo-700";
+  
+  if (cat.includes("salon") || cat.includes("beauty")) {
+    gradient = "from-pink-500 to-rose-500"; btnColor = "bg-rose-600 hover:bg-rose-700";
+  } else if (cat.includes("repair") || cat.includes("auto")) {
+    gradient = "from-cyan-500 to-blue-600"; btnColor = "bg-blue-600 hover:bg-blue-700";
+  } else if (cat.includes("rest") || cat.includes("food")) {
+    gradient = "from-orange-500 to-red-600"; btnColor = "bg-orange-600 hover:bg-orange-700";
+  }
 
   return `<!DOCTYPE html>
 <html lang="en" class="scroll-smooth">
@@ -120,35 +115,107 @@ function generateLocalMasterpiece(biz) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${biz.name} | Premium Presentation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&family=Plus+Jakarta+Sans:wght@400;600&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030307; color: #f8fafc; }
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #050508; color: #f8fafc; }
         .heading-font { font-family: 'Space Grotesk', sans-serif; }
+        .glass-nav { background: rgba(5,5,8,0.8); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .glass-card { background: rgba(255,255,255,0.02); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
     </style>
 </head>
 <body class="antialiased">
-    <section class="relative min-h-screen flex items-center justify-center pt-24 px-6">
+    <nav class="fixed top-0 w-full z-50 glass-nav px-6 py-4 flex justify-between items-center">
+        <div class="heading-font text-xl font-bold text-white tracking-tight">${biz.name}</div>
+        <a href="#contact" class="${btnColor} text-white px-5 py-2 rounded-full font-medium transition-colors text-sm">Book Now</a>
+    </nav>
+
+    <section class="relative min-h-screen flex items-center justify-center pt-20 px-6">
         <div class="absolute inset-0 z-0">
-            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#030307]/90 to-[#030307]"></div>
-            <img src="${images.hero}" class="w-full h-full object-cover opacity-60" alt="Hero">
+            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#050508]/80 to-[#050508]"></div>
+            <img src="${images.hero}" class="w-full h-full object-cover opacity-50" alt="Hero">
         </div>
-        <div class="relative z-10 text-center max-w-4xl mx-auto">
-            <h1 class="heading-font text-5xl md:text-7xl font-extrabold text-white mt-6">
-                Premium Solutions by <br><span class="text-transparent bg-clip-text bg-gradient-to-r ${gradient}">${biz.name}</span>
+        <div class="relative z-10 text-center max-w-4xl mx-auto" data-aos="fade-up">
+            <span class="inline-block py-1 px-3 rounded-full bg-white/10 border border-white/20 text-sm mb-6 text-gray-300">
+                ★ ${biz.rating || '4.9'} Rating | ${biz.review_count || '100'}+ Reviews
+            </span>
+            <h1 class="heading-font text-5xl md:text-7xl font-extrabold text-white leading-tight">
+                Experience Excellence at <br><span class="text-transparent bg-clip-text bg-gradient-to-r ${gradient}">${biz.name}</span>
             </h1>
+            <p class="mt-6 text-lg text-gray-400 max-w-2xl mx-auto">We provide premium, industry-leading services tailored to your exact needs. Quality you can trust.</p>
+            <div class="mt-8 flex gap-4 justify-center">
+                <a href="#services" class="${btnColor} text-white px-8 py-4 rounded-full font-bold shadow-lg transition-transform hover:scale-105">Explore Services</a>
+            </div>
         </div>
     </section>
-    <section class="py-24 px-6 max-w-7xl mx-auto grid md:grid-cols-3 gap-6 relative z-10">
-        <img src="${images.g1}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
-        <img src="${images.g2}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
-        <img src="${images.g3}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10">
+
+    <section id="services" class="py-24 px-6 max-w-7xl mx-auto relative z-10">
+        <div class="text-center mb-16" data-aos="fade-up">
+            <h2 class="heading-font text-4xl font-bold">Our Premium Services</h2>
+            <p class="text-gray-400 mt-4">Designed to deliver the best results.</p>
+        </div>
+        <div class="grid md:grid-cols-3 gap-6">
+            <div class="glass-card p-8 rounded-2xl transition hover:-translate-y-2" data-aos="fade-up" data-aos-delay="100">
+                <i class="fa-solid fa-gem text-3xl text-white mb-4"></i>
+                <h3 class="text-xl font-bold mb-2 heading-font">Executive Service</h3>
+                <p class="text-gray-400 text-sm">Top-tier customized solutions specifically handled by our master team.</p>
+            </div>
+            <div class="glass-card p-8 rounded-2xl transition hover:-translate-y-2" data-aos="fade-up" data-aos-delay="200">
+                <i class="fa-solid fa-bolt text-3xl text-white mb-4"></i>
+                <h3 class="text-xl font-bold mb-2 heading-font">Express Care</h3>
+                <p class="text-gray-400 text-sm">Fast, reliable, and precise execution for clients requiring immediate results.</p>
+            </div>
+            <div class="glass-card p-8 rounded-2xl transition hover:-translate-y-2" data-aos="fade-up" data-aos-delay="300">
+                <i class="fa-solid fa-shield-check text-3xl text-white mb-4"></i>
+                <h3 class="text-xl font-bold mb-2 heading-font">Quality Guarantee</h3>
+                <p class="text-gray-400 text-sm">Every service comes with our iron-clad satisfaction protection.</p>
+            </div>
+        </div>
     </section>
+
+    <section class="py-20 px-6 max-w-7xl mx-auto relative z-10">
+        <h2 class="heading-font text-3xl font-bold mb-10 text-center" data-aos="fade-up">Visual Showcase</h2>
+        <div class="grid md:grid-cols-3 gap-6">
+            <img src="${images.g1}" class="rounded-2xl h-72 w-full object-cover shadow-lg hover:scale-105 transition-transform duration-500" data-aos="zoom-in">
+            <img src="${images.g2}" class="rounded-2xl h-72 w-full object-cover shadow-lg hover:scale-105 transition-transform duration-500" data-aos="zoom-in" data-aos-delay="100">
+            <img src="${images.g3}" class="rounded-2xl h-72 w-full object-cover shadow-lg hover:scale-105 transition-transform duration-500" data-aos="zoom-in" data-aos-delay="200">
+        </div>
+    </section>
+
+    <section id="contact" class="py-24 px-6 max-w-7xl mx-auto grid md:grid-cols-2 gap-12 relative z-10">
+        <div data-aos="fade-right">
+            <h2 class="heading-font text-4xl font-bold mb-6">Let's Get Started</h2>
+            <div class="space-y-6 text-gray-300">
+                <div class="flex items-center gap-4 glass-card p-4 rounded-xl"><i class="fa-solid fa-location-dot text-xl text-gray-100"></i> <span>${biz.address || 'Location available upon booking'}</span></div>
+                <div class="flex items-center gap-4 glass-card p-4 rounded-xl"><i class="fa-solid fa-phone text-xl text-gray-100"></i> <span>${biz.phone || 'Contact us online'}</span></div>
+                <div class="flex items-center gap-4 glass-card p-4 rounded-xl"><i class="fa-solid fa-clock text-xl text-gray-100"></i> <span>${biz.hours || 'Open Daily'}</span></div>
+            </div>
+        </div>
+        <div class="glass-card p-8 rounded-2xl" data-aos="fade-left">
+            <h3 class="heading-font text-2xl font-bold mb-6">Send a Message</h3>
+            <form class="space-y-4" onsubmit="event.preventDefault(); alert('Request sent!');">
+                <input type="text" placeholder="Name" required class="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white focus:outline-none focus:border-white/30">
+                <input type="email" placeholder="Email" required class="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white focus:outline-none focus:border-white/30">
+                <textarea placeholder="How can we help?" rows="4" required class="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white focus:outline-none focus:border-white/30"></textarea>
+                <button type="submit" class="w-full ${btnColor} text-white font-bold p-3 rounded-lg transition-colors">Submit Request</button>
+            </form>
+        </div>
+    </section>
+
+    <footer class="border-t border-white/10 py-8 text-center text-gray-500 text-sm">
+        <p>&copy; 2026 ${biz.name}. All rights reserved.</p>
+    </footer>
+
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script>
+        AOS.init({ once: true, duration: 800 });
+    </script>
 </body>
 </html>`;
 }
 
-// ─── CLAUDE GENERATOR (سونات 4.6 - پرچمدار طراحی) ───────────────────────────
+// ─── CLAUDE GENERATOR (قفل شده روی پایدارترین نسخه) ───────────────────────────
 async function generatePremiumHTML(biz) {
   const images = getIndustryImages(biz.category);
 
@@ -179,9 +246,9 @@ You MUST use exactly these predefined CSS classes on empty <div> elements to sho
 Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown blocks.`;
 
   try {
-    // 🚀 ارتقای مستقیم به جدیدترین غول طراحی سال ۲۰۲۶
+    // 🚀 قفل شده روی پایدارترین، قوی‌ترین و مطمئن‌ترین نسخه کلاود ۳.۵
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet-20240620",
       max_tokens: 8000,
       messages: [{ role: "user", content: prompt }],
     });
@@ -190,11 +257,11 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown 
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
-    // تزریق مستقیم عکس‌های لوکس
+    // هاله تاریک هیرو شفاف‌تر شده تا سایت خفه نباشد
     const cssInjection = `
     <style>
       .bg-hero-img {
-        background-image: linear-gradient(rgba(3, 3, 7, 0.65), rgba(3, 3, 7, 0.98)), url('${images.hero}');
+        background-image: linear-gradient(rgba(3, 3, 7, 0.4), rgba(3, 3, 7, 0.85)), url('${images.hero}');
         background-size: cover; background-position: center;
       }
       .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; transition: transform 0.5s; }
@@ -215,6 +282,7 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown 
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Claude Sonnet Error:", error.message);
+    // در صورت قطعی اینترنت، قالب فوقِ کامل محلی بالا می‌آید نه قالب نصفه‌نیمه
     return generateLocalMasterpiece(biz);
   }
 }
