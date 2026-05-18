@@ -1,10 +1,8 @@
 require("dotenv").config();
-const cors = require('cors');
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
 const fetch   = require("node-fetch");
-
 const app  = express();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
