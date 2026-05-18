@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 const { Pool } = require("pg");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Anthropic = require("@anthropic-ai/sdk"); // بازگشت باشکوه کلاود!
 
 const app  = express();
 const pool = new Pool({
@@ -13,7 +13,10 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// راه‌اندازی کلاود با کلید شما
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_KEY
+});
 
 // ─── DB INIT ─────────────────────────────────────────────────────────────────
 async function initDB() {
@@ -54,11 +57,10 @@ async function initDB() {
   }
 }
 
-// ─── IMAGE BANK (انبار عکس‌های لوکس و واقعی برای تزریق) ───────────────────────
+// ─── IMAGE BANK (انبار عکس‌های لوکس برای تزریق به طراحی کلاود) ───────────────
 function getIndustryImages(category) {
   const cat = (category || "business").toLowerCase();
   
-  // دیفالت (شرکتی / عمومی)
   let imgs = {
     hero: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80",
     g1: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
@@ -66,161 +68,112 @@ function getIndustryImages(category) {
     g3: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80"
   };
 
-  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair") || cat.includes("nail")) {
+  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair")) {
     imgs = {
       hero: "https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1600&q=80",
       g1: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
       g2: "https://images.unsplash.com/photo-1605497746444-ac9da58480a8?auto=format&fit=crop&w=800&q=80",
       g3: "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=800&q=80"
     };
-  } else if (cat.includes("repair") || cat.includes("auto") || cat.includes("glass") || cat.includes("mechanic")) {
+  } else if (cat.includes("repair") || cat.includes("auto") || cat.includes("glass")) {
     imgs = {
       hero: "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?auto=format&fit=crop&w=1600&q=80",
       g1: "https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&w=800&q=80",
       g2: "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=800&q=80",
       g3: "https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?auto=format&fit=crop&w=800&q=80"
     };
-  } else if (cat.includes("rest") || cat.includes("food") || cat.includes("grill") || cat.includes("cafe")) {
+  } else if (cat.includes("rest") || cat.includes("food") || cat.includes("grill")) {
     imgs = {
       hero: "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=1600&q=80",
       g1: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
       g2: "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
       g3: "https://images.unsplash.com/photo-1606787366850-de6330128bfc?auto=format&fit=crop&w=800&q=80"
     };
-  } else if (cat.includes("clean") || cat.includes("wash") || cat.includes("maid")) {
-    imgs = {
-      hero: "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80",
-      g1: "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80",
-      g2: "https://images.unsplash.com/photo-1527515637-6742562d5395?auto=format&fit=crop&w=800&q=80",
-      g3: "https://images.unsplash.com/photo-1628177142898-93e46e46284f?auto=format&fit=crop&w=800&q=80"
-    };
   }
   return imgs;
 }
 
-// ─── ELITE LOCAL VISUAL ENGINE (سیستم بک‌آپ محلی) ─────────────────────────────
-function generateLocalMasterpiece(biz) {
-  const images = getIndustryImages(biz.category);
-  const cat = (biz.category || "business").toLowerCase();
-  
-  let accent = "#6366f1"; 
-  let gradient = "from-indigo-500 via-purple-500 to-pink-500";
-
-  if (cat.includes("salon") || cat.includes("beauty")) {
-    accent = "#ec4899"; gradient = "from-pink-500 via-rose-500 to-amber-500";
-  } else if (cat.includes("repair") || cat.includes("auto")) {
-    accent = "#0ea5e9"; gradient = "from-sky-500 via-blue-600 to-cyan-500";
-  } else if (cat.includes("rest") || cat.includes("food")) {
-    accent = "#f97316"; gradient = "from-amber-500 via-orange-500 to-red-600";
-  }
-
-  return `<!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${biz.name} | Premium Presentation</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030307; color: #f8fafc; }
-        .heading-font { font-family: 'Space Grotesk', sans-serif; }
-        .glass-card { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.06); }
-    </style>
-</head>
-<body class="antialiased">
-    <section class="relative min-h-screen flex items-center justify-center pt-24 px-6">
-        <div class="absolute inset-0 z-0">
-            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#030307]/80 to-[#030307]"></div>
-            <img src="${images.hero}" class="w-full h-full object-cover opacity-60" alt="Hero Backdrop">
-        </div>
-        <div class="relative z-10 text-center max-w-4xl mx-auto">
-            <h1 class="heading-font text-5xl md:text-7xl font-extrabold text-white mt-6 tracking-tight">
-                Premium Solutions by <br><span class="text-transparent bg-clip-text bg-gradient-to-r ${gradient}">${biz.name}</span>
-            </h1>
-        </div>
-    </section>
-    
-    <section class="py-24 px-6 max-w-7xl mx-auto grid md:grid-cols-3 gap-6 relative z-10">
-        <img src="${images.g1}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 1">
-        <img src="${images.g2}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 2">
-        <img src="${images.g3}" class="rounded-2xl h-64 w-full object-cover shadow-2xl border border-white/10" alt="Gallery 3">
-    </section>
-</body>
-</html>`;
-}
-
-// ─── AI PREMIUM HTML GENERATOR (مجهز به سیستم تزریق مستقیم عکس) ──────────────
+// ─── CLAUDE 3.5 SONNET GENERATOR (پرچمدار طراحی) ──────────────────────────────
 async function generatePremiumHTML(biz) {
   const images = getIndustryImages(biz.category);
 
-  const prompt = `You are a world-class award-winning UI/UX web designer.
-Generate an incredibly stunning, ultra-modern single-page landing page for:
+  const prompt = `You are a world-class, elite UI/UX web designer (Awwwards winner level).
+Generate an incredibly stunning, high-end single-page landing page for this business:
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address}
 Phone: ${biz.phone}
 Rating: ${biz.rating} (${biz.review_count} reviews)
 
-STRICT DESIGN DIRECTION:
-1. Dark mode glassmorphism with neon glowing accents based on industry.
-2. Fluid Animations: Use AOS library (data-aos="fade-up").
-3. Elite Layout: Sticky Navbar, Hero section, Services grid, Visual Gallery, Testimonials, Contact Form. Include FontAwesome icons.
+STRICT DESIGN DIRECTION (Make it look like a $10,000 agency website):
+1. Use Tailwind CSS via CDN.
+2. Immersive Color Palette: Dark mode glassmorphism with neon/glowing accent colors tailored to the industry (e.g. gold/rose for beauty, cyan for auto, crimson for restaurants). Use beautiful gradients and blur backdrops.
+3. Typography: Include FontAwesome icons. Use elegant Google Fonts (Space Grotesk or Syne for headings, Inter for body text).
+4. Fluid Animations: Include AOS library (Animate on Scroll). Apply 'data-aos="fade-up"' to layout containers.
+5. Elite Layout Structure: 
+   - A sticky glassmorphic Navigation bar.
+   - A jaw-dropping Hero section with a massive bold headline and two CTA buttons.
+   - An interactive floating Stats counter grid (Rating, Reviews).
+   - A detailed Premium Services grid with hover effects.
+   - A stunning Visual Gallery grid (3 items).
+   - A high-converting Contact Form.
 
-🚨 CRITICAL IMAGE RULE (DO NOT WRITE IMAGE URLS!):
-To prevent broken links, I have already pre-loaded the high-res images into CSS classes. YOU MUST NOT write any <img src="..."> tags.
-You MUST use these exact predefined CSS classes on <div> elements to show images:
-- For the Hero Section background container, you MUST add the class: 'bg-hero-img'
+🚨 CRITICAL IMAGE RULE (CSS INJECTION TRICK):
+Do NOT write any <img src="..."> tags for the hero or gallery to prevent broken 404 links. 
+I will inject the images via CSS. You MUST use exactly these predefined CSS classes on empty <div> elements to show images:
+- For the Hero Section background container, add the class: 'bg-hero-img'
 - For the 3 Visual Gallery grid items, use exactly this structure:
-  <div class="gallery-img-1 rounded-2xl shadow-xl h-64 w-full"></div>
-  <div class="gallery-img-2 rounded-2xl shadow-xl h-64 w-full"></div>
-  <div class="gallery-img-3 rounded-2xl shadow-xl h-64 w-full"></div>
+  <div class="gallery-img-1 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in"></div>
+  <div class="gallery-img-2 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in" data-aos-delay="100"></div>
+  <div class="gallery-img-3 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in" data-aos-delay="200"></div>
 
-Return ONLY the raw HTML/CSS/JS starting with <!DOCTYPE html>. No markdown blocks.`;
+Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown blocks.`;
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(prompt);
-    let htmlContent = result.response.text().trim();
+    // 💥 استفاده از نسخه دقیق، رسمی و زنده کلاود سونات (بدون ارور ۴۰۴)
+    const response = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 8000,
+      messages: [{ role: "user", content: prompt }],
+    });
 
-    if (!htmlContent) throw new Error("Empty response layer");
-
+    let htmlContent = response.content[0].text.trim();
     if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
-    // 💥 تزریق مستقیم تصاویر به استایل‌های هوش مصنوعی
+    // تزریق مستقیم عکس‌های لوکس به کدهای شاهکار کلاود
     const cssInjection = `
     <style>
       .bg-hero-img {
-        background-image: linear-gradient(rgba(3, 3, 7, 0.7), rgba(3, 3, 7, 0.95)), url('${images.hero}');
+        background-image: linear-gradient(rgba(3, 3, 7, 0.65), rgba(3, 3, 7, 0.98)), url('${images.hero}');
         background-size: cover; 
         background-position: center;
       }
-      .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; }
-      .gallery-img-2 { background-image: url('${images.g2}'); background-size: cover; background-position: center; }
-      .gallery-img-3 { background-image: url('${images.g3}'); background-size: cover; background-position: center; }
+      .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-1:hover { transform: scale(1.05); }
+      .gallery-img-2 { background-image: url('${images.g2}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-2:hover { transform: scale(1.05); }
+      .gallery-img-3 { background-image: url('${images.g3}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-3:hover { transform: scale(1.05); }
     </style>
     </head>`;
 
     if (htmlContent.includes("</head>")) {
       htmlContent = htmlContent.replace("</head>", cssInjection);
     } else {
-      // در صورتی که جمینای تگ head را به شکل دیگری بست
       htmlContent += cssInjection.replace("</head>", ""); 
     }
     
     return htmlContent.trim();
   } catch (error) {
-    console.error("⚠️ AI Engine Error:", error.message);
-    return generateLocalMasterpiece(biz);
+    console.error("🔴 Claude Sonnet Error:", error.message);
+    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Presentation is syncing. Please reload.</p></div></body></html>`;
   }
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint High-End Visual Engine" }));
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Sonnet Elite Engine" }));
 
 app.get("/api/businesses", async (req, res) => {
   const { status, q } = req.query;
@@ -333,5 +286,5 @@ app.get("/preview/:slug", async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Production Engine active on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 SiteSprint Claude Sonnet Engine active on port ${PORT}`));
 });
