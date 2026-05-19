@@ -13,462 +13,441 @@ const pool = new Pool({
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY
-});
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
 
-// ─── DB INIT ──────────────────────────────────────────────────────────────────
 async function initDB() {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS businesses (
-        id            SERIAL PRIMARY KEY,
-        name          TEXT NOT NULL,
-        address       TEXT DEFAULT '',
-        phone         TEXT DEFAULT '',
-        category      TEXT DEFAULT '',
-        rating        NUMERIC(2,1) DEFAULT 0,
-        review_count  INT DEFAULT 0,
-        hours         TEXT DEFAULT '',
-        website       TEXT DEFAULT '',
-        google_url    TEXT DEFAULT '',
-        status        TEXT DEFAULT 'prospect',
-        notes         TEXT DEFAULT '',
-        area_searched TEXT DEFAULT '',
-        preview_slug  TEXT DEFAULT '',
-        created_at    TIMESTAMPTZ DEFAULT NOW(),
-        updated_at    TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
+        id SERIAL PRIMARY KEY, name TEXT NOT NULL, address TEXT DEFAULT '',
+        phone TEXT DEFAULT '', category TEXT DEFAULT '', rating NUMERIC(2,1) DEFAULT 0,
+        review_count INT DEFAULT 0, hours TEXT DEFAULT '', website TEXT DEFAULT '',
+        google_url TEXT DEFAULT '', status TEXT DEFAULT 'prospect', notes TEXT DEFAULT '',
+        area_searched TEXT DEFAULT '', preview_slug TEXT DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`);
     await pool.query(`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS preview_slug TEXT DEFAULT '';`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS generated_sites (
-        id          SERIAL PRIMARY KEY,
-        business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
-        slug        TEXT UNIQUE NOT NULL,
-        html        TEXT NOT NULL,
-        created_at  TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    console.log("✅ Database synced successfully.");
-  } catch (err) {
-    console.error("❌ DB Init Error:", err);
-  }
+        id SERIAL PRIMARY KEY, business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
+        slug TEXT UNIQUE NOT NULL, html TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()
+      );`);
+    console.log("✅ DB ready");
+  } catch (err) { console.error("❌ DB Init Error:", err); }
 }
 
-// ─── INDUSTRY IMAGE BANK ──────────────────────────────────────────────────────
-function getIndustryImages(category) {
-  const cat = (category || "business").toLowerCase();
-
-  let imgs = [
-    "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80",
-    "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1542744094-3a31f103e35f?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=800&q=80"
+function getImages(category) {
+  const cat = (category || "").toLowerCase();
+  if (cat.includes("dental") || cat.includes("dentist")) return [
+    "https://images.unsplash.com/photo-1606811841689-23dfddce3e66?w=1600&q=80",
+    "https://images.unsplash.com/photo-1588776814546-1ffbb172a090?w=800&q=80",
+    "https://images.unsplash.com/photo-1629909615184-74f495363b67?w=800&q=80",
+    "https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=800&q=80",
+    "https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=800&q=80",
   ];
-
-  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair")) {
-    imgs = [
-      "https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1605497746444-ac9da58480a8?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?auto=format&fit=crop&w=800&q=80"
-    ];
-  } else if (cat.includes("repair") || cat.includes("auto") || cat.includes("mechanic")) {
-    imgs = [
-      "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=800&q=80"
-    ];
-  } else if (cat.includes("rest") || cat.includes("food") || cat.includes("cafe")) {
-    imgs = [
-      "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1606787366850-de6330128bfc?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=800&q=80"
-    ];
-  } else if (cat.includes("clean") || cat.includes("wash") || cat.includes("maid") || cat.includes("hvac")) {
-    imgs = [
-      "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1527515637-6742562d5395?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80",
-      "https://images.unsplash.com/photo-1545205597-3d9d02c29597?auto=format&fit=crop&w=800&q=80"
-    ];
-  }
-
-  return imgs;
+  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair")) return [
+    "https://images.unsplash.com/photo-1562322140-8baeececf3df?w=1600&q=80",
+    "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800&q=80",
+    "https://images.unsplash.com/photo-1605497746444-ac9da58480a8?w=800&q=80",
+    "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80",
+    "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=800&q=80",
+  ];
+  if (cat.includes("auto") || cat.includes("repair") || cat.includes("mechanic")) return [
+    "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?w=1600&q=80",
+    "https://images.unsplash.com/photo-1486006920555-c77dce18193b?w=800&q=80",
+    "https://images.unsplash.com/photo-1563720223185-11003d516935?w=800&q=80",
+    "https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?w=800&q=80",
+    "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=800&q=80",
+  ];
+  if (cat.includes("rest") || cat.includes("food") || cat.includes("cafe") || cat.includes("bistro")) return [
+    "https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=1600&q=80",
+    "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&q=80",
+    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800&q=80",
+    "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80",
+    "https://images.unsplash.com/photo-1559339352-11d035aa65de?w=800&q=80",
+  ];
+  if (cat.includes("gym") || cat.includes("fitness")) return [
+    "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=1600&q=80",
+    "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=800&q=80",
+    "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&q=80",
+    "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=800&q=80",
+    "https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=800&q=80",
+  ];
+  return [
+    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&q=80",
+    "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80",
+    "https://images.unsplash.com/photo-1542744094-3a31f103e35f?w=800&q=80",
+    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=800&q=80",
+    "https://images.unsplash.com/photo-1551836022-d5d88e9218df?w=800&q=80",
+  ];
 }
 
-// ─── COLOR PALETTE PER INDUSTRY ───────────────────────────────────────────────
-function getIndustryColors(category) {
+function getPalette(category) {
   const cat = (category || "").toLowerCase();
   if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair"))
-    return { primary: "#C9748A", accent: "#F2A7B8", dark: "#1a0d10" };
+    return { bg: "#0d0008", primary: "#C9748A", accent: "#F2A7B8", text: "#fdf0f4" };
+  if (cat.includes("dental") || cat.includes("dentist"))
+    return { bg: "#00061a", primary: "#00B4D8", accent: "#90E0EF", text: "#e8f8ff" };
   if (cat.includes("auto") || cat.includes("repair") || cat.includes("mechanic"))
-    return { primary: "#00B4D8", accent: "#90E0EF", dark: "#03045e" };
-  if (cat.includes("rest") || cat.includes("food") || cat.includes("cafe"))
-    return { primary: "#F4A261", accent: "#E76F51", dark: "#1a0a00" };
-  if (cat.includes("dental") || cat.includes("medical") || cat.includes("health"))
-    return { primary: "#4CC9F0", accent: "#7DF9FF", dark: "#03045e" };
+    return { bg: "#050a10", primary: "#F77F00", accent: "#FCBF49", text: "#fff8ee" };
+  if (cat.includes("rest") || cat.includes("food") || cat.includes("cafe") || cat.includes("bistro"))
+    return { bg: "#0d0500", primary: "#E76F51", accent: "#F4A261", text: "#fff8f5" };
   if (cat.includes("gym") || cat.includes("fitness"))
-    return { primary: "#F72585", accent: "#FF6B6B", dark: "#10002b" };
+    return { bg: "#080012", primary: "#F72585", accent: "#FF6B6B", text: "#fff0f8" };
   if (cat.includes("clean") || cat.includes("hvac") || cat.includes("plumb"))
-    return { primary: "#52B788", accent: "#95D5B2", dark: "#081c15" };
-  if (cat.includes("law") || cat.includes("legal"))
-    return { primary: "#9B8EA0", accent: "#C9B8CE", dark: "#0d0a0e" };
-  return { primary: "#6366f1", accent: "#818cf8", dark: "#0f0a1e" };
+    return { bg: "#00100a", primary: "#52B788", accent: "#95D5B2", text: "#f0fff8" };
+  return { bg: "#07071a", primary: "#6366f1", accent: "#818cf8", text: "#f0f0ff" };
 }
 
-// ─── TWO-PASS HTML GENERATION (ANTI-TRUNCATION) ───────────────────────────────
-async function generatePremiumHTML(biz) {
-  const images = getIndustryImages(biz.category);
-  const colors = getIndustryColors(biz.category);
+async function generateSite(biz) {
+  const imgs = getImages(biz.category);
+  const c = getPalette(biz.category);
 
-  const SYSTEM = `You are an elite Awwwards-winning web designer.
-Output ONLY raw HTML/CSS/JS — no markdown, no backticks, no explanations.
+  const SYSTEM = `You are a senior frontend engineer. Output ONLY raw HTML with no markdown, no backticks, no commentary. ALL CSS must be in <style> tags. Only use these external resources: Google Fonts and Font Awesome 6 from cdnjs.cloudflare.com. Never use Tailwind or Bootstrap CDN.`;
 
-CDN LINKS TO USE (copy exactly):
-- Bootstrap 5 CSS: <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-- Bootstrap JS: <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"><\/script>
-- FontAwesome 6: <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
-- AOS CSS: <link href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css" rel="stylesheet">
-- AOS JS: <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"><\/script>
-- Google Fonts: pick one elegant font
+  const p1 = `Generate the first half of a premium dark landing page for:
+Name: ${biz.name} | Category: ${biz.category} | Rating: ${biz.rating}★ (${biz.review_count} reviews)
+Phone: ${biz.phone || "Call us"} | Address: ${biz.address || ""} | Hours: ${biz.hours || "Mon-Sat 9AM-6PM"}
+Colors — bg: ${c.bg} | primary: ${c.primary} | accent: ${c.accent} | text: ${c.text}
 
-DESIGN RULES:
-- DO NOT use Tailwind CSS — use Bootstrap 5 classes + plain CSS in <style> blocks
-- Glassmorphism: backdrop-filter:blur(12px), rgba backgrounds, box-shadow glow borders
-- Primary: ${colors.primary} | Accent: ${colors.accent} | Dark bg: ${colors.dark}
-- Icons: <i class="fas fa-icon-name"></i> — never raw SVG
-- Paragraph text max 1-2 sentences
-- No Lorem ipsum
+Output IN ORDER then STOP — do NOT write </body> or </html>:
 
-IMAGE CLASSES — empty <div> elements, images injected via CSS later:
-  Hero:    <div class="bg-hero-img" style="min-height:100vh">
-  Feature: <div class="feature-img" style="height:400px">
-  Gallery: <div class="gallery-img-1" style="height:280px;border-radius:12px">
-           <div class="gallery-img-2" style="height:280px;border-radius:12px">
-           <div class="gallery-img-3" style="height:280px;border-radius:12px">`;
-
-  // ── PASS 1: head + navbar + hero + trust bar + services ─────────────────────
-  const pass1Prompt = `Business: "${biz.name}" | Category: ${biz.category} | Rating: ${biz.rating} stars | Reviews: ${biz.review_count}
-
-Generate ONLY these parts and STOP — do NOT write </body> or </html> yet:
-
-1. Full <!DOCTYPE html><html lang="en"><head> block with:
-   - <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+1) <!DOCTYPE html><html lang="en"><head> with:
+   - charset + viewport metas
    - <title>${biz.name}</title>
-   - Bootstrap 5 CSS from jsdelivr
-   - FontAwesome 6 from jsdelivr
-   - AOS CSS from jsdelivr
-   - Google Fonts link (1 elegant font like Playfair Display or Cormorant)
-   - <style> block with:
-       body { background: ${colors.dark}; color: #f0f0f0; font-family: your chosen font, sans-serif; }
-       .glass { background: rgba(255,255,255,0.07); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15); border-radius: 16px; }
-       .btn-primary-custom { background: ${colors.primary}; border: none; color: #fff; padding: 12px 32px; border-radius: 50px; font-weight: 600; transition: 0.3s; }
-       .btn-primary-custom:hover { background: ${colors.accent}; color: #111; transform: translateY(-2px); }
-       .section-title { color: ${colors.accent}; font-size: 2.5rem; font-weight: 700; }
-       .bg-hero-img { min-height: 100vh; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; position: relative; }
-       .gallery-img-1, .gallery-img-2, .gallery-img-3 { height: 280px; background-size: cover; background-position: center; border-radius: 12px; transition: transform 0.4s; }
-       .gallery-img-1:hover, .gallery-img-2:hover, .gallery-img-3:hover { transform: scale(1.04); }
-       .feature-img { height: 400px; background-size: cover; background-position: center; border-radius: 16px; }
+   - Google Fonts: import 2 fonts (one serif for headings, one sans for body)
+   - Font Awesome: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+   - Full <style> block covering the ENTIRE page:
+     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+     html { scroll-behavior: smooth; }
+     body { background: ${c.bg}; color: ${c.text}; font-family: [your sans]; line-height: 1.6; }
+     a { text-decoration: none; }
+     .glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; }
+     .btn-primary { display: inline-block; background: ${c.primary}; color: #fff; padding: 15px 38px; border-radius: 50px; font-weight: 700; font-size: 1rem; border: none; cursor: pointer; transition: all .3s; }
+     .btn-primary:hover { filter: brightness(1.15); transform: translateY(-3px); box-shadow: 0 15px 40px ${c.primary}55; }
+     .btn-ghost { display: inline-block; background: transparent; color: ${c.text}; padding: 15px 38px; border-radius: 50px; font-weight: 700; font-size: 1rem; border: 2px solid rgba(255,255,255,0.3); cursor: pointer; transition: all .3s; }
+     .btn-ghost:hover { border-color: ${c.primary}; color: ${c.primary}; transform: translateY(-3px); }
+     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 20px 6%; background: rgba(0,0,0,0.2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.08); transition: background .4s; }
+     nav.scrolled { background: rgba(0,0,0,0.92); }
+     .nav-brand { font-family: [your serif]; font-size: 1.4rem; font-weight: 800; color: #fff; }
+     .nav-brand em { color: ${c.primary}; font-style: normal; }
+     .nav-links { display: flex; list-style: none; gap: 36px; }
+     .nav-links a { color: rgba(255,255,255,0.75); font-size: 0.95rem; font-weight: 500; transition: color .3s; }
+     .nav-links a:hover { color: ${c.accent}; }
+     .hero { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; }
+     .bg-hero-img { position: absolute; inset: 0; background-size: cover; background-position: center; }
+     .hero-overlay { position: absolute; inset: 0; background: linear-gradient(160deg, ${c.bg}f0 0%, ${c.bg}88 60%, ${c.bg}f5 100%); }
+     .hero-content { position: relative; z-index: 2; max-width: 820px; padding: 0 20px; padding-top: 100px; }
+     .hero-badge { display: inline-flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.18); border-radius: 100px; padding: 10px 24px; font-size: 0.9rem; font-weight: 600; margin-bottom: 32px; }
+     .hero-badge .stars { color: #FFD700; letter-spacing: 2px; }
+     .hero h1 { font-family: [your serif]; font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 900; line-height: 1.08; margin-bottom: 24px; }
+     .hero h1 .highlight { color: ${c.primary}; }
+     .hero p { font-size: 1.15rem; opacity: 0.8; max-width: 560px; margin: 0 auto 44px; }
+     .hero-actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+     .trust-strip { padding: 52px 6%; background: rgba(255,255,255,0.025); border-top: 1px solid rgba(255,255,255,0.06); border-bottom: 1px solid rgba(255,255,255,0.06); }
+     .trust-inner { max-width: 900px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; text-align: center; }
+     .trust-num { font-size: 2.8rem; font-weight: 900; color: ${c.primary}; font-family: [your serif]; line-height: 1; }
+     .trust-lbl { font-size: 0.85rem; opacity: 0.6; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase; }
+     .section { padding: 100px 6%; }
+     .section-eyebrow { color: ${c.accent}; font-size: 0.8rem; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 14px; }
+     .section-heading { font-family: [your serif]; font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+     .section-sub { font-size: 1rem; opacity: 0.65; max-width: 520px; }
+     .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 60px; }
+     .svc-card { padding: 38px 32px; transition: transform .3s, box-shadow .3s; }
+     .svc-card:hover { transform: translateY(-10px); box-shadow: 0 30px 80px rgba(0,0,0,0.5); }
+     .svc-icon { width: 60px; height: 60px; background: ${c.primary}20; border-radius: 14px; display: flex; align-items: center; justify-content: center; margin-bottom: 22px; }
+     .svc-icon i { font-size: 1.5rem; color: ${c.primary}; }
+     .svc-card h3 { font-family: [your serif]; font-size: 1.2rem; font-weight: 700; margin-bottom: 10px; }
+     .svc-card p { font-size: 0.92rem; opacity: 0.65; line-height: 1.75; }
+     .gallery-section { padding: 100px 6%; }
+     .gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 60px; }
+     .gallery-img-1, .gallery-img-2, .gallery-img-3 { height: 300px; background-size: cover; background-position: center; border-radius: 16px; transition: transform .4s, box-shadow .4s; cursor: pointer; }
+     .gallery-img-1:hover, .gallery-img-2:hover, .gallery-img-3:hover { transform: scale(1.05); box-shadow: 0 24px 80px rgba(0,0,0,0.6); }
+     .contact-section { padding: 100px 6%; }
+     .contact-inner { display: grid; grid-template-columns: 1fr 1.2fr; gap: 60px; max-width: 1100px; margin: 60px auto 0; align-items: start; }
+     .contact-details { display: flex; flex-direction: column; gap: 28px; padding-top: 10px; }
+     .contact-row { display: flex; align-items: flex-start; gap: 18px; }
+     .c-icon { width: 50px; height: 50px; min-width: 50px; background: ${c.primary}20; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+     .c-icon i { color: ${c.primary}; font-size: 1.1rem; }
+     .c-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; opacity: 0.55; margin-bottom: 5px; }
+     .c-val { font-size: 1rem; font-weight: 600; }
+     .contact-form { padding: 40px 38px; }
+     .f-group { margin-bottom: 20px; }
+     .f-label { display: block; font-size: 0.78rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; margin-bottom: 8px; }
+     .f-input { width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 10px; padding: 14px 18px; color: ${c.text}; font-size: 0.97rem; font-family: inherit; transition: border-color .3s, background .3s; outline: none; }
+     .f-input:focus { border-color: ${c.primary}; background: rgba(255,255,255,0.1); }
+     .f-input::placeholder { opacity: 0.35; }
+     textarea.f-input { min-height: 130px; resize: vertical; }
+     .f-submit { width: 100%; padding: 16px; font-size: 1rem; font-weight: 700; letter-spacing: 1px; margin-top: 8px; }
+     footer { padding: 64px 6% 36px; border-top: 1px solid rgba(255,255,255,0.07); text-align: center; }
+     .footer-brand { font-family: [your serif]; font-size: 1.6rem; font-weight: 800; color: ${c.primary}; margin-bottom: 10px; }
+     .footer-tag { opacity: 0.45; font-size: 0.9rem; margin-bottom: 36px; }
+     .footer-copy { opacity: 0.3; font-size: 0.8rem; }
+     @keyframes fadeUp { from { opacity:0; transform:translateY(28px); } to { opacity:1; transform:translateY(0); } }
+     .fade-up { animation: fadeUp .9s ease forwards; }
+     .delay-1 { animation-delay: .15s; opacity: 0; }
+     .delay-2 { animation-delay: .3s; opacity: 0; }
+     @media(max-width:768px) { .nav-links{display:none;} .gallery-grid{grid-template-columns:1fr;} .contact-inner{grid-template-columns:1fr;} .trust-inner{grid-template-columns:1fr;gap:28px;} }
+   </style>
+   </head>
 
-2. <body> tag
+2) <body>
 
-3. Sticky navbar (Bootstrap navbar-dark) with logo "${biz.name}", links: Home Services Gallery Contact, and a CTA button styled with .btn-primary-custom
+3) <nav id="topnav">
+     <span class="nav-brand"><em>[First word]</em> [Rest of name]</span>
+     <ul class="nav-links">
+       <li><a href="#services">Services</a></li>
+       <li><a href="#gallery">Gallery</a></li>
+       <li><a href="#contact">Contact</a></li>
+     </ul>
+     <a href="#contact" class="btn-primary">Get Free Quote</a>
+   </nav>
 
-4. Hero section:
-   <section class="bg-hero-img">
-     dark overlay div inside, then centered content: big h1, p subheadline, two buttons, rating badge showing ${biz.rating}★ (${biz.review_count} reviews)
+4) <section class="hero">
+     <div class="bg-hero-img"></div>
+     <div class="hero-overlay"></div>
+     <div class="hero-content">
+       <div class="hero-badge fade-up"><span class="stars">★★★★★</span> ${biz.rating} · ${biz.review_count} Reviews</div>
+       <h1 class="fade-up delay-1">[Compelling headline for ${biz.category} with <span class="highlight">key phrase</span>]</h1>
+       <p class="fade-up delay-2">[One strong value proposition sentence]</p>
+       <div class="hero-actions fade-up delay-2">
+         <a href="#contact" class="btn-primary">[Main CTA for ${biz.category}]</a>
+         <a href="#services" class="btn-ghost">Our Services</a>
+       </div>
+     </div>
    </section>
 
-5. Trust bar: dark section with 3 Bootstrap col stats (numbers + labels relevant to ${biz.category})
+5) Trust strip with 3 stats relevant to ${biz.category}
 
-6. Services section (py-5): heading, Bootstrap row with 3 col cards each with: FontAwesome icon (fas fa-*), h5 title, short description. Cards use .glass class.
+6) <section class="section" id="services">
+     Eyebrow + heading + 3 .svc-card.glass cards with FontAwesome icons and descriptions for ${biz.category}
+   </section>
 
-STOP after services </section>. No </body> or </html>.`;
+STOP after services </section>. Do NOT write </body> or </html>.`;
 
-  // ── PASS 2: gallery + contact + footer + scripts ─────────────────────────────
-  const pass2Prompt = `Business: "${biz.name}" | Phone: ${biz.phone || "Call us"} | Address: ${biz.address || "Visit us"} | Hours: ${biz.hours || "Mon-Sat 9AM-6PM"}
+  const p2 = `Continue the HTML for "${biz.name}" (${biz.category}). Start with <section class="gallery-section"> and end with </html>.
 
-Continue the HTML page. Start directly from a <section> tag. Generate these final parts then close the document:
+Output exactly:
 
-1. Gallery section (py-5, dark bg):
-   Heading "Our Work" or similar, Bootstrap row with 3 cols:
-   <div class="gallery-img-1" data-aos="zoom-in"></div>
-   <div class="gallery-img-2" data-aos="zoom-in" data-aos-delay="100"></div>
-   <div class="gallery-img-3" data-aos="zoom-in" data-aos-delay="200"></div>
+<section class="gallery-section" id="gallery">
+  <div style="text-align:center">
+    <p class="section-eyebrow">Our Work</p>
+    <h2 class="section-heading">[Gallery heading for ${biz.category}]</h2>
+  </div>
+  <div class="gallery-grid">
+    <div class="gallery-img-1"></div>
+    <div class="gallery-img-2"></div>
+    <div class="gallery-img-3"></div>
+  </div>
+</section>
 
-2. Contact section (py-5): Bootstrap row split:
-   Left col — business info with fas icons: phone "${biz.phone || 'Call us'}", address "${biz.address || 'Visit us'}", hours "${biz.hours || 'Mon-Sat 9AM-6PM'}"
-   Right col — form with: Full Name input, Email input, Message textarea, Submit button (.btn-primary-custom)
-   Form inputs styled: background rgba(255,255,255,0.08), border 1px solid rgba(255,255,255,0.2), color #fff, border-radius 8px
+<section class="contact-section" id="contact">
+  <div style="text-align:center;margin-bottom:0">
+    <p class="section-eyebrow">Get In Touch</p>
+    <h2 class="section-heading">Let's Talk</h2>
+  </div>
+  <div class="contact-inner">
+    <div class="contact-details">
+      <div class="contact-row">
+        <div class="c-icon"><i class="fas fa-phone"></i></div>
+        <div><p class="c-label">Phone</p><p class="c-val">${biz.phone || "Call for pricing"}</p></div>
+      </div>
+      <div class="contact-row">
+        <div class="c-icon"><i class="fas fa-location-dot"></i></div>
+        <div><p class="c-label">Address</p><p class="c-val">${biz.address || "Visit our location"}</p></div>
+      </div>
+      <div class="contact-row">
+        <div class="c-icon"><i class="fas fa-clock"></i></div>
+        <div><p class="c-label">Hours</p><p class="c-val">${biz.hours || "Mon-Sat 9AM-6PM"}</p></div>
+      </div>
+    </div>
+    <div class="contact-form glass">
+      <form onsubmit="handleForm(event)">
+        <div class="f-group"><label class="f-label">Full Name</label><input class="f-input" type="text" placeholder="Your full name" required></div>
+        <div class="f-group"><label class="f-label">Email</label><input class="f-input" type="email" placeholder="your@email.com" required></div>
+        <div class="f-group"><label class="f-label">Phone</label><input class="f-input" type="tel" placeholder="(555) 000-0000"></div>
+        <div class="f-group"><label class="f-label">Message</label><textarea class="f-input" placeholder="How can we help you?" required></textarea></div>
+        <button type="submit" class="btn-primary f-submit">Send Message &rarr;</button>
+      </form>
+    </div>
+  </div>
+</section>
 
-3. Footer: dark bg, centered, business name + tagline + copyright ${biz.name} 2025
+<footer>
+  <div class="footer-brand">${biz.name}</div>
+  <p class="footer-tag">[Short tagline for ${biz.category}]</p>
+  <p class="footer-copy">&copy; 2025 ${biz.name}. All rights reserved.</p>
+</footer>
 
-4. Scripts section:
-   - Bootstrap JS bundle from jsdelivr
-   - AOS JS from jsdelivr
-   - <script>AOS.init({ duration: 800, once: true });</script>
-
-5. </body></html>
-
-Start output with <section`;
+<script>
+  window.addEventListener('scroll', () => {
+    document.getElementById('topnav').classList.toggle('scrolled', window.scrollY > 60);
+  });
+  function handleForm(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.textContent = 'Message Sent!';
+    btn.style.background = '#22c55e';
+    setTimeout(() => { btn.textContent = 'Send Message \u2192'; btn.style.background = ''; e.target.reset(); }, 3000);
+  }
+</script>
+</body>
+</html>`;
 
   try {
-    console.log(`🎨 Pass 1: Generating head + hero + services for "${biz.name}"...`);
-    const res1 = await anthropic.messages.create({
+    console.log(`🎨 Pass 1 — ${biz.name}`);
+    const r1 = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      max_tokens: 5000,
       system: SYSTEM,
-      messages: [{ role: "user", content: pass1Prompt }]
+      messages: [{ role: "user", content: p1 }],
     });
+    let part1 = r1.content[0].text.trim().replace(/^```html?\n?/,"").replace(/^```\n?/,"").replace(/```$/,"");
 
-    let part1 = res1.content[0].text.trim();
-    part1 = part1.replace(/^```html?\n?/, "").replace(/^```\n?/, "").replace(/```$/, "").trim();
-
-    console.log(`🎨 Pass 2: Generating gallery + contact + footer for "${biz.name}"...`);
-    const res2 = await anthropic.messages.create({
+    console.log(`🎨 Pass 2 — ${biz.name}`);
+    const r2 = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      max_tokens: 2500,
       system: SYSTEM,
-      messages: [{ role: "user", content: pass2Prompt }]
+      messages: [{ role: "user", content: p2 }],
     });
+    let part2 = r2.content[0].text.trim().replace(/^```html?\n?/,"").replace(/^```\n?/,"").replace(/```$/,"");
 
-    let part2 = res2.content[0].text.trim();
-    part2 = part2.replace(/^```html?\n?/, "").replace(/^```\n?/, "").replace(/```$/, "").trim();
+    let html = part1 + "\n" + part2;
 
-    // Merge the two parts
-    let htmlContent = part1 + "\n\n" + part2;
+    const imgCSS = `<style>
+  .bg-hero-img { background-image: url('${imgs[0]}') !important; }
+  .gallery-img-1 { background-image: url('${imgs[2]}') !important; }
+  .gallery-img-2 { background-image: url('${imgs[3]}') !important; }
+  .gallery-img-3 { background-image: url('${imgs[4]}') !important; }
+</style>`;
 
-    // Safety net: ensure document is closed
-    if (!htmlContent.includes("</html>")) {
-      htmlContent += "\n</body>\n</html>";
-    }
+    html = html.includes("</head>")
+      ? html.replace("</head>", imgCSS + "\n</head>")
+      : imgCSS + html;
 
-    // Inject real image URLs via CSS
-    const cssInjection = `
-<style>
-  .bg-hero-img {
-    background-image: linear-gradient(rgba(4,4,10,0.55), rgba(4,4,10,0.92)), url('${images[0]}');
-    background-size: cover; background-position: center; background-attachment: fixed;
-  }
-  .feature-img {
-    background-image: url('${images[1]}');
-    background-size: cover; background-position: center;
-  }
-  .gallery-img-1 {
-    background-image: url('${images[2]}');
-    background-size: cover; background-position: center;
-    transition: transform 0.5s ease; overflow: hidden;
-  }
-  .gallery-img-1:hover { transform: scale(1.05); }
-  .gallery-img-2 {
-    background-image: url('${images[3]}');
-    background-size: cover; background-position: center;
-    transition: transform 0.5s ease;
-  }
-  .gallery-img-2:hover { transform: scale(1.05); }
-  .gallery-img-3 {
-    background-image: url('${images[4]}');
-    background-size: cover; background-position: center;
-    transition: transform 0.5s ease;
-  }
-  .gallery-img-3:hover { transform: scale(1.05); }
-</style>
-</head>`;
-
-    if (htmlContent.includes("</head>")) {
-      htmlContent = htmlContent.replace("</head>", cssInjection);
-    } else {
-      // Fallback: inject before <body>
-      htmlContent = htmlContent.replace("<body", cssInjection.replace("</head>", "") + "\n<body");
-    }
-
-    console.log(`✅ Site generated successfully for "${biz.name}" (${htmlContent.length} chars)`);
-    return htmlContent.trim();
-
-  } catch (error) {
-    console.error("🔴 Generation Error:", error.message);
-    return `<!DOCTYPE html><html><head><title>Error</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0f0f13;font-family:sans-serif;"><h1 style="color:#ef4444;">AI generation failed. Please try again.</h1></body></html>`;
+    if (!html.includes("</html>")) html += "\n</body>\n</html>";
+    console.log(`✅ Done — ${html.length} chars`);
+    return html;
+  } catch (err) {
+    console.error("🔴 Error:", err.message);
+    return `<!DOCTYPE html><html><head><title>Error</title></head><body style="background:#0f0f13;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.5rem;text-align:center;padding:20px;">Generation failed — please try again.</body></html>`;
   }
 }
 
-// ─── ROUTES ───────────────────────────────────────────────────────────────────
+app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint v3" }));
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Engine v2" }));
-
-// GET all businesses (with optional filters)
 app.get("/api/businesses", async (req, res) => {
   try {
     const { status, q } = req.query;
     let sql = "SELECT * FROM businesses WHERE 1=1";
     const params = [];
-    if (status && status !== "all") {
-      sql += ` AND status=$${params.length + 1}`;
-      params.push(status);
-    }
+    if (status && status !== "all") { sql += ` AND status=$${params.length+1}`; params.push(status); }
     if (q) {
-      sql += ` AND (name ILIKE $${params.length + 1} OR category ILIKE $${params.length + 2} OR address ILIKE $${params.length + 3})`;
+      sql += ` AND (name ILIKE $${params.length+1} OR category ILIKE $${params.length+2} OR address ILIKE $${params.length+3})`;
       params.push(`%${q}%`, `%${q}%`, `%${q}%`);
     }
     sql += " ORDER BY created_at DESC";
-    const result = await pool.query(sql, params);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    res.json((await pool.query(sql, params)).rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST create business
 app.post("/api/businesses", async (req, res) => {
   try {
     const b = req.body;
     const r = await pool.query(
       `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,website,google_url,status,area_searched)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [
-        b.name, b.address || "", b.phone || "", b.category || "",
-        b.rating || 0, b.review_count || 0, b.hours || "",
-        b.website || "", b.google_url || "",
-        b.status || "prospect", b.area_searched || ""
-      ]
+      [b.name, b.address||"", b.phone||"", b.category||"", b.rating||0, b.review_count||0,
+       b.hours||"", b.website||"", b.google_url||"", b.status||"prospect", b.area_searched||""]
     );
     res.status(201).json(r.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT update business
 app.put("/api/businesses/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const b = req.body;
     const allowed = ["name","address","phone","category","rating","review_count","hours","website","google_url","status","notes","preview_slug"];
-    const sets = [];
-    const params = [];
+    const sets = [], params = [];
     for (const col of allowed) {
-      if (col in b) {
-        sets.push(`${col}=$${params.length + 1}`);
-        params.push(b[col]);
-      }
+      if (col in b) { sets.push(`${col}=$${params.length+1}`); params.push(b[col]); }
     }
     if (!sets.length) return res.json({ ok: true });
     sets.push("updated_at=NOW()");
     params.push(id);
     await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${params.length}`, params);
-    const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-    res.json(r.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    res.json((await pool.query("SELECT * FROM businesses WHERE id=$1", [id])).rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE business
 app.delete("/api/businesses/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
     res.json({ deleted: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST search area (generates 20 mock businesses)
 app.post("/api/search", async (req, res) => {
   try {
     const { area } = req.body;
     if (!area) return res.status(400).json({ error: "area required" });
-
     const categories = [
-      { cat: "Auto Repair",  name: "Motors & Glass"      },
-      { cat: "Restaurant",   name: "Grill & Bistro"       },
-      { cat: "Salon",        name: "Beauty Studio"        },
-      { cat: "Plumbing",     name: "Rooter Services"      },
-      { cat: "Dental",       name: "Family Dentistry"     },
-      { cat: "Gym",          name: "Fitness Center"       },
-      { cat: "Landscaping",  name: "Lawn & Garden"        },
-      { cat: "Roofing",      name: "Roofing Experts"      },
-      { cat: "Cafe",         name: "Coffee Roasters"      },
-      { cat: "Cleaning",     name: "Commercial Cleaners"  }
+      { cat: "Auto Repair", name: "Motors & Glass" }, { cat: "Restaurant", name: "Grill & Bistro" },
+      { cat: "Salon", name: "Beauty Studio" }, { cat: "Plumbing", name: "Rooter Services" },
+      { cat: "Dental", name: "Family Dentistry" }, { cat: "Gym", name: "Fitness Center" },
+      { cat: "Landscaping", name: "Lawn & Garden" }, { cat: "Roofing", name: "Roofing Experts" },
+      { cat: "Cafe", name: "Coffee Roasters" }, { cat: "Cleaning", name: "Commercial Cleaners" }
     ];
-
     const results = [];
     for (let i = 1; i <= 20; i++) {
       const type = categories[i % categories.length];
       results.push({
-        id: 1000 + i,
-        name: `${area} Elite ${type.name}`,
-        address: `${100 + i * 15} Commerce Blvd, ${area}`,
-        phone: `(555) 019-${(i * 123).toString().padStart(4, "0")}`,
+        id: 1000+i, name: `${area} Elite ${type.name}`,
+        address: `${100+i*15} Commerce Blvd, ${area}`,
+        phone: `(555) 019-${(i*123).toString().padStart(4,"0")}`,
         category: type.cat,
-        rating: parseFloat((4 + Math.random()).toFixed(1)),
-        review_count: Math.floor(Math.random() * 400) + 45,
-        hours: "Mon-Sat 8AM - 6PM",
-        area_searched: area
+        rating: parseFloat((4+Math.random()).toFixed(1)),
+        review_count: Math.floor(Math.random()*400)+45,
+        hours: "Mon-Sat 8AM - 6PM", area_searched: area
       });
     }
-
     res.json(results);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── GENERATE SITE (shared handler) ───────────────────────────────────────────
 const generateHandler = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Try to find existing business
     let bizResult = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-    let currentBiz;
-
+    let biz;
     if (bizResult.rows.length) {
-      currentBiz = bizResult.rows[0];
+      biz = bizResult.rows[0];
     } else {
-      // Business not in DB yet — insert it from request body
       const b = req.body;
-      const insertResult = await pool.query(
+      const ins = await pool.query(
         `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,status,area_searched)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [
-          b.name || "Business", b.address || "", b.phone || "",
-          b.category || "", b.rating || 5, b.review_count || 50,
-          b.hours || "", "prospect", b.area_searched || ""
-        ]
+        [b.name||"Business", b.address||"", b.phone||"", b.category||"",
+         b.rating||5, b.review_count||50, b.hours||"", "prospect", b.area_searched||""]
       );
-      currentBiz = insertResult.rows[0];
+      biz = ins.rows[0];
     }
-
-    // Generate HTML via two-pass Claude
-    const html = await generatePremiumHTML(currentBiz);
-    const slug = `${currentBiz.id}-${Date.now()}`;
-
-    // Save generated site
+    const html = await generateSite(biz);
+    const slug = `${biz.id}-${Date.now()}`;
     await pool.query(
-      `INSERT INTO generated_sites (business_id, slug, html)
-       VALUES ($1,$2,$3)
+      `INSERT INTO generated_sites (business_id, slug, html) VALUES ($1,$2,$3)
        ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
-      [currentBiz.id, slug, html]
+      [biz.id, slug, html]
     );
-
-    // Update business record with new slug + status
     await pool.query(
       "UPDATE businesses SET preview_slug=$1, status='site shown', updated_at=NOW() WHERE id=$2",
-      [slug, currentBiz.id]
+      [slug, biz.id]
     );
-
     res.json({ url: `/preview/${slug}`, slug });
   } catch (err) {
-    console.error("🔴 Generate Route Error:", err);
+    console.error("🔴 Generate error:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -476,20 +455,14 @@ const generateHandler = async (req, res) => {
 app.post("/api/generate/:id", generateHandler);
 app.post("/generate/:id", generateHandler);
 
-// ─── SERVE PREVIEW ────────────────────────────────────────────────────────────
 app.get("/preview/:slug", async (req, res) => {
   try {
     const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
     if (!r.rows.length) return res.status(404).send("<h1>Site not found</h1>");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(r.rows[0].html);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
+  } catch (err) { res.status(500).send(err.message); }
 });
 
-// ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Engine v2 active on port ${PORT}`));
-});
+initDB().then(() => app.listen(PORT, () => console.log(`🚀 SiteSprint v3 on port ${PORT}`)));
