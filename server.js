@@ -57,7 +57,7 @@ async function initDB() {
   }
 }
 
-// ─── DYNAMIC IMAGE BANK (بانک عکس‌های واقعی برای تزریق به پرامپت کلاود) ──────────
+// ─── DYNAMIC IMAGE BANK ───────────────────────────────────────────────────────
 function getIndustryImages(category) {
   const cat = (category || "business").toLowerCase();
   
@@ -105,49 +105,38 @@ function getIndustryImages(category) {
   return imgs;
 }
 
-// ─── CLAUDE ARCHITECT ENGINE ──────────────────────────────────────────────────
+// ─── CLAUDE ARCHITECT ENGINE (ANTI-TRUNCATION EDITION) ────────────────────────
 async function generatePremiumHTML(biz) {
   const images = getIndustryImages(biz.category);
 
-  const prompt = `You are a world-class, elite UI/UX web designer, copywriter, and frontend architect.
-Your mission is to generate an incredibly stunning, UNIQUE, high-end, and fully complete single-page landing page for this business.
+  const prompt = `You are an elite Awwwards-winning UI/UX web designer and frontend architect.
+Generate a stunning, UNIQUE, high-end single-page landing page.
 
-### Business Profile:
-- Name: ${biz.name}
-- Category/Industry: ${biz.category}
-- Address: ${biz.address}
-- Phone: ${biz.phone}
-- Rating: ${biz.rating} (${biz.review_count} reviews)
+Business: ${biz.name} | Category: ${biz.category} | Rating: ${biz.rating}
 
-### Your Creative Task:
-1. **Analyze the Industry:** Based on the category "${biz.category}", YOU must deduce the perfect color palette. If it's a spa/salon, use soft luxury colors (rose gold, cream). If it's a gym, use intense high-contrast colors (neon green/black). If it's a corporate cleaner, use pristine blues/whites. Apply this color palette via Tailwind CSS classes.
-2. **Copywriting:** Write compelling, professional, and industry-specific marketing copy for the Hero headline, services, and about sections. DO NOT use generic lorem ipsum.
-3. **Animations & UI:** Use Tailwind CSS via CDN. Include AOS (Animate on Scroll) and apply 'data-aos="fade-up"' to layout containers. Use FontAwesome icons. Build a beautiful Glassmorphism design (blur backdrops, sleek shadows, modern borders).
+🚨 CRITICAL ANTI-TRUNCATION RULES (YOU MUST OBEY):
+1. Output the FULL, complete code from <!DOCTYPE html> to </html>. Never stop halfway.
+2. DO NOT use placeholders like "".
+3. TO SAVE TOKENS: Keep paragraph texts very concise (1-2 sentences max). 
+4. TO SAVE TOKENS: NEVER use raw <svg> paths. Only use <i class="fa-solid fa-icon-name"></i> (FontAwesome is included).
 
-### The Layout Requirements (MUST HAVE ALL 6 SECTIONS):
-Build a comprehensive, long-form landing page including:
-1. **Sticky Glass Navbar:** With Logo and "Book Now" button.
-2. **Epic Hero Section:** A massive hook headline, subheadline, 2 CTA buttons, and a background image overlay.
-3. **Trust & Metrics Banner:** Displaying the Google rating and review count beautifully.
-4. **Premium Services Grid:** Create 3 highly detailed service cards relevant to this specific business, with hover effects and icons.
-5. **Visual Portfolio/Gallery:** A grid showcasing the business's work.
-6. **High-Converting Contact/Booking Section & Footer:** A beautiful form and contact info grid.
+### Design & Layout:
+1. Tailor the color palette strictly to "${biz.category}" (e.g. Rose Gold for Salon, Electric Cyan for Auto, Warm Amber for Food). Use Tailwind CSS.
+2. Build a Glassmorphism design (blur backdrops, glowing borders).
+3. Include 6 Sections: Navbar, Epic Hero Section, Trust Metrics, Services Grid (3 cards), Visual Gallery Grid (3 items), and Contact Form/Footer.
 
-### 🚨 CRITICAL IMAGE INJECTION RULE:
-AI often breaks image URLs. To prevent this, I am providing you with 5 guaranteed, ultra-high-resolution Unsplash images perfectly matched to this business category.
-**YOU MUST USE THESE EXACT URLS IN YOUR HTML.** Do not invent URLs. 
-- Use this for the Hero Background: ${images[0]}
-- Use this for an About/Feature image: ${images[1]}
-- Use these for the Gallery Grid: 
-  1: ${images[2]}
-  2: ${images[3]}
-  3: ${images[4]}
-(Insert them using standard <img src="..."> tags or inline style="background-image: url(...)").
+### Image Injection Rule:
+Use EXACTLY these CSS classes on empty <div> elements (I will inject them later):
+- Hero Background: class="bg-hero-img"
+- Feature Image: class="feature-img"
+- Gallery Items:
+  <div class="gallery-img-1 rounded-2xl h-72 w-full" data-aos="zoom-in"></div>
+  <div class="gallery-img-2 rounded-2xl h-72 w-full" data-aos="zoom-in" data-aos-delay="100"></div>
+  <div class="gallery-img-3 rounded-2xl h-72 w-full" data-aos="zoom-in" data-aos-delay="200"></div>
 
-Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Output the FULL code without cutting it off. No explanations, no markdown code blocks.`;
+Return ONLY raw HTML/CSS/JS code starting with <!DOCTYPE html> and ending with </html>. No markdown, no explanations.`;
 
   try {
-    // 🚀 استفاده دقیق از مدل Claude Sonnet 4.6 به درخواست شما
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6", 
       max_tokens: 8192,
@@ -160,10 +149,39 @@ Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. Output the F
     if (htmlContent.startsWith("```")) htmlContent = htmlContent.replace(/```/, "");
     if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
     
+    // Auto-fix if Claude still forgets the closing tags
+    if (!htmlContent.includes("</html>")) {
+        htmlContent += "\n</body>\n</html>";
+    }
+    
+    const cssInjection = `
+    <style>
+      .bg-hero-img {
+        background-image: linear-gradient(rgba(4, 4, 10, 0.6), rgba(4, 4, 10, 0.95)), url('${images[0]}');
+        background-size: cover; background-position: center;
+      }
+      .feature-img {
+        background-image: url('${images[1]}'); background-size: cover; background-position: center;
+      }
+      .gallery-img-1 { background-image: url('${images[2]}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-1:hover { transform: scale(1.05); }
+      .gallery-img-2 { background-image: url('${images[3]}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-2:hover { transform: scale(1.05); }
+      .gallery-img-3 { background-image: url('${images[4]}'); background-size: cover; background-position: center; transition: transform 0.5s; }
+      .gallery-img-3:hover { transform: scale(1.05); }
+    </style>
+    </head>`;
+
+    if (htmlContent.includes("</head>")) {
+      htmlContent = htmlContent.replace("</head>", cssInjection);
+    } else {
+      htmlContent += cssInjection.replace("</head>", ""); 
+    }
+    
     return htmlContent.trim();
   } catch (error) {
     console.error("🔴 Claude Architect Error:", error.message);
-    return `<!DOCTYPE html><html><body><h1 style="color:red; text-align:center; margin-top:20%;">Error connecting to Claude 4.6. Please try again.</h1></body></html>`;
+    return `<!DOCTYPE html><html><body><h1 style="color:red; text-align:center; margin-top:20%;">Error connecting to AI. Please try again.</h1></body></html>`;
   }
 }
 
