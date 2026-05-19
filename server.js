@@ -202,7 +202,7 @@ Start your output with <section (gallery section opening tag).`;
   try {
     console.log(`🎨 Pass 1: Generating head + hero + services for "${biz.name}"...`);
     const res1 = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 4096,
       system: SYSTEM,
       messages: [{ role: "user", content: pass1Prompt }]
@@ -213,7 +213,7 @@ Start your output with <section (gallery section opening tag).`;
 
     console.log(`🎨 Pass 2: Generating gallery + contact + footer for "${biz.name}"...`);
     const res2 = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 4096,
       system: SYSTEM,
       messages: [{ role: "user", content: pass2Prompt }]
