@@ -132,72 +132,94 @@ async function generatePremiumHTML(biz) {
 
   const SYSTEM = `You are an elite Awwwards-winning web designer.
 Output ONLY raw HTML/CSS/JS — no markdown, no backticks, no explanations.
-Rules:
-- Use Tailwind CSS via CDN
-- Use FontAwesome 6 icons via CDN: <i class="fa-solid fa-icon-name"></i>  (never raw SVG paths)
-- Glassmorphism design: blur backdrops, glowing borders
-- Primary color: ${colors.primary} | Accent: ${colors.accent} | Dark bg: ${colors.dark}
-- Image placeholder classes (empty divs, DO NOT use <img> tags):
-    Hero bg:    <div class="bg-hero-img ...">
-    Feature:    <div class="feature-img ...">
-    Gallery:    <div class="gallery-img-1 rounded-2xl h-72 w-full"></div>
-                <div class="gallery-img-2 rounded-2xl h-72 w-full"></div>
-                <div class="gallery-img-3 rounded-2xl h-72 w-full"></div>
-- Keep all paragraph text 1–2 sentences max to save tokens
-- No placeholders like "Lorem ipsum" or "[content here]"`;
+
+CDN LINKS TO USE (copy exactly):
+- Bootstrap 5 CSS: <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+- Bootstrap JS: <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"><\/script>
+- FontAwesome 6: <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
+- AOS CSS: <link href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css" rel="stylesheet">
+- AOS JS: <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"><\/script>
+- Google Fonts: pick one elegant font
+
+DESIGN RULES:
+- DO NOT use Tailwind CSS — use Bootstrap 5 classes + plain CSS in <style> blocks
+- Glassmorphism: backdrop-filter:blur(12px), rgba backgrounds, box-shadow glow borders
+- Primary: ${colors.primary} | Accent: ${colors.accent} | Dark bg: ${colors.dark}
+- Icons: <i class="fas fa-icon-name"></i> — never raw SVG
+- Paragraph text max 1-2 sentences
+- No Lorem ipsum
+
+IMAGE CLASSES — empty <div> elements, images injected via CSS later:
+  Hero:    <div class="bg-hero-img" style="min-height:100vh">
+  Feature: <div class="feature-img" style="height:400px">
+  Gallery: <div class="gallery-img-1" style="height:280px;border-radius:12px">
+           <div class="gallery-img-2" style="height:280px;border-radius:12px">
+           <div class="gallery-img-3" style="height:280px;border-radius:12px">`;
 
   // ── PASS 1: head + navbar + hero + trust bar + services ─────────────────────
   const pass1Prompt = `Business: "${biz.name}" | Category: ${biz.category} | Rating: ${biz.rating} stars | Reviews: ${biz.review_count}
 
-Generate ONLY these parts and STOP — do not write </body> or </html>:
+Generate ONLY these parts and STOP — do NOT write </body> or </html> yet:
 
-1. Full <!DOCTYPE html><html><head> block including:
-   - Tailwind CDN
-   - FontAwesome 6 CDN
-   - Google Fonts (pick 1 elegant font)
-   - AOS animation library CDN
-   - <style> block with glassmorphism utilities and .bg-hero-img / .feature-img / .gallery-img-1/2/3 as empty placeholders (background: transparent)
+1. Full <!DOCTYPE html><html lang="en"><head> block with:
+   - <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
    - <title>${biz.name}</title>
+   - Bootstrap 5 CSS from jsdelivr
+   - FontAwesome 6 from jsdelivr
+   - AOS CSS from jsdelivr
+   - Google Fonts link (1 elegant font like Playfair Display or Cormorant)
+   - <style> block with:
+       body { background: ${colors.dark}; color: #f0f0f0; font-family: your chosen font, sans-serif; }
+       .glass { background: rgba(255,255,255,0.07); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15); border-radius: 16px; }
+       .btn-primary-custom { background: ${colors.primary}; border: none; color: #fff; padding: 12px 32px; border-radius: 50px; font-weight: 600; transition: 0.3s; }
+       .btn-primary-custom:hover { background: ${colors.accent}; color: #111; transform: translateY(-2px); }
+       .section-title { color: ${colors.accent}; font-size: 2.5rem; font-weight: 700; }
+       .bg-hero-img { min-height: 100vh; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; position: relative; }
+       .gallery-img-1, .gallery-img-2, .gallery-img-3 { height: 280px; background-size: cover; background-position: center; border-radius: 12px; transition: transform 0.4s; }
+       .gallery-img-1:hover, .gallery-img-2:hover, .gallery-img-3:hover { transform: scale(1.04); }
+       .feature-img { height: 400px; background-size: cover; background-position: center; border-radius: 16px; }
 
-2. <body> opening tag with dark background style
+2. <body> tag
 
-3. Sticky glassmorphism Navbar with:
-   - Logo (business name)
-   - Nav links: Home, Services, Gallery, Contact
-   - CTA button "Get Quote"
+3. Sticky navbar (Bootstrap navbar-dark) with logo "${biz.name}", links: Home Services Gallery Contact, and a CTA button styled with .btn-primary-custom
 
-4. Full-screen Hero section:
-   - Use <div class="bg-hero-img w-full min-h-screen flex items-center justify-center relative">
-   - Big headline, subheadline, two CTA buttons
-   - Floating rating badge showing ${biz.rating}★
+4. Hero section:
+   <section class="bg-hero-img">
+     dark overlay div inside, then centered content: big h1, p subheadline, two buttons, rating badge showing ${biz.rating}★ (${biz.review_count} reviews)
+   </section>
 
-5. Trust metrics bar (3 stats relevant to ${biz.category})
+5. Trust bar: dark section with 3 Bootstrap col stats (numbers + labels relevant to ${biz.category})
 
-6. Services section with heading + grid of 3 cards (each with FontAwesome icon, title, 1-sentence description)
+6. Services section (py-5): heading, Bootstrap row with 3 col cards each with: FontAwesome icon (fas fa-*), h5 title, short description. Cards use .glass class.
 
-End your output after the closing </section> of services. Do NOT close body or html.`;
+STOP after services </section>. No </body> or </html>.`;
 
   // ── PASS 2: gallery + contact + footer + scripts ─────────────────────────────
   const pass2Prompt = `Business: "${biz.name}" | Phone: ${biz.phone || "Call us"} | Address: ${biz.address || "Visit us"} | Hours: ${biz.hours || "Mon-Sat 9AM-6PM"}
 
 Continue the HTML page. Start directly from a <section> tag. Generate these final parts then close the document:
 
-1. Gallery section with heading + 3-column grid:
-   <div class="gallery-img-1 rounded-2xl h-72 w-full" data-aos="zoom-in"></div>
-   <div class="gallery-img-2 rounded-2xl h-72 w-full" data-aos="zoom-in" data-aos-delay="100"></div>
-   <div class="gallery-img-3 rounded-2xl h-72 w-full" data-aos="zoom-in" data-aos-delay="200"></div>
+1. Gallery section (py-5, dark bg):
+   Heading "Our Work" or similar, Bootstrap row with 3 cols:
+   <div class="gallery-img-1" data-aos="zoom-in"></div>
+   <div class="gallery-img-2" data-aos="zoom-in" data-aos-delay="100"></div>
+   <div class="gallery-img-3" data-aos="zoom-in" data-aos-delay="200"></div>
 
-2. Contact section with:
-   - Business info (phone, address, hours) with FontAwesome icons
-   - Contact form (name, email, message, submit button)
+2. Contact section (py-5): Bootstrap row split:
+   Left col — business info with fas icons: phone "${biz.phone || 'Call us'}", address "${biz.address || 'Visit us'}", hours "${biz.hours || 'Mon-Sat 9AM-6PM'}"
+   Right col — form with: Full Name input, Email input, Message textarea, Submit button (.btn-primary-custom)
+   Form inputs styled: background rgba(255,255,255,0.08), border 1px solid rgba(255,255,255,0.2), color #fff, border-radius 8px
 
-3. Footer with business name, tagline, copyright
+3. Footer: dark bg, centered, business name + tagline + copyright ${biz.name} 2025
 
-4. <script> block initializing AOS: AOS.init({ duration: 800, once: true });
+4. Scripts section:
+   - Bootstrap JS bundle from jsdelivr
+   - AOS JS from jsdelivr
+   - <script>AOS.init({ duration: 800, once: true });</script>
 
-5. </body></html> to properly close the document
+5. </body></html>
 
-Start your output with <section (gallery section opening tag).`;
+Start output with <section`;
 
   try {
     console.log(`🎨 Pass 1: Generating head + hero + services for "${biz.name}"...`);
