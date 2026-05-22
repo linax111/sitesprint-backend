@@ -306,25 +306,62 @@ ${photosBlock}
 Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences, NO commentary before or after, NO explanations. Just the raw HTML.`;
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
-  const r = await ai.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
-    messages: [{ role: "user", content: prompt }],
-  });
 
-  let html = r.content[0]?.text?.trim() || "";
-  // Strip any accidental markdown fences
+  // Multi-turn generation with auto-continuation if max_tokens is hit
+  const messages = [{ role: "user", content: prompt }];
+  let html = "";
+  let attempts = 0;
+  const MAX_ATTEMPTS = 5;       // safety cap; usually 1-2 calls is enough
+  const PER_CALL_TOKENS = 32000; // Sonnet 4.6 supports up to 64K; 32K is a safe per-call ceiling
+
+  while (attempts < MAX_ATTEMPTS) {
+    attempts++;
+    const r = await ai.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: PER_CALL_TOKENS,
+      messages,
+    });
+
+    const chunk = r.content[0]?.text || "";
+    html += chunk;
+
+    console.log(`📦 ${biz.name} chunk ${attempts}: +${chunk.length} chars (stop_reason=${r.stop_reason}, total=${html.length})`);
+
+    // Done when the model finishes naturally
+    if (r.stop_reason !== "max_tokens") break;
+
+    // Hit the per-call cap — ask Claude to continue from the exact cutoff
+    messages.push({ role: "assistant", content: chunk });
+    messages.push({
+      role: "user",
+      content:
+        "Continue the HTML exactly where you stopped. Do NOT repeat any content already written. " +
+        "Do NOT add any preamble, explanation, or markdown. Output only the next characters of the HTML " +
+        "so when concatenated to what you already wrote it forms one valid document ending in </html>.",
+    });
+
+    // Extra safety: if we already have </html> somehow, stop
+    if (html.toLowerCase().includes("</html>")) break;
+  }
+
+  // Strip any accidental markdown fences at the boundaries
   html = html.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-  // Validate
+  // Validate structure
   const lc = html.toLowerCase();
   if (!lc.includes("<!doctype") && !lc.startsWith("<html")) {
-    throw new Error("AI did not return valid HTML");
+    throw new Error("AI did not return valid HTML (no doctype/html tag)");
   }
   if (html.length < 2000) {
     throw new Error("AI returned suspiciously short HTML");
   }
-  console.log(`✅ HTML generated for ${biz.name}: ${html.length} chars`);
+  if (!lc.includes("</html>")) {
+    // Last-resort recovery: best-effort close so the page at least renders
+    console.warn(`⚠️ ${biz.name}: HTML missing </html> after ${attempts} attempts — auto-closing`);
+    if (!lc.includes("</body>")) html += "\n</body>";
+    html += "\n</html>";
+  }
+  console.log(`✅ ${biz.name}: HTML done — ${html.length} chars, ${attempts} call(s)`);
   return html;
 }
 
