@@ -316,11 +316,15 @@ Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with 
 
   while (attempts < MAX_ATTEMPTS) {
     attempts++;
-    const r = await ai.messages.create({
+    // Use streaming — required by Anthropic API for requests where
+    // max_tokens could push total time over 10 minutes.
+    // .finalMessage() awaits completion and returns the same shape as create().
+    const stream = ai.messages.stream({
       model: "claude-sonnet-4-6",
       max_tokens: PER_CALL_TOKENS,
       messages,
     });
+    const r = await stream.finalMessage();
 
     const chunk = r.content[0]?.text || "";
     html += chunk;
