@@ -143,7 +143,7 @@ function mapCategory(types = [], name = "") {
 
 // Shape a Place Details result into the business object we use everywhere
 function shapeBusiness(p) {
-  const photos = (p.photos || []).slice(0, 8).map(ph =>
+  const photos = (p.photos || []).slice(0, 10).map(ph =>
     `/photo?ref=${encodeURIComponent(ph.photo_reference)}&w=1600`
   );
   const reviews = (p.reviews || []).map(r => ({
@@ -270,9 +270,11 @@ async function generateUniqueHTML(biz) {
 
   const hoursBlock = biz.hours?.length ? biz.hours.join(" | ") : "Hours not listed";
 
-  const prompt = `You are an award-winning web designer. Design and code a ONE-OF-A-KIND single-page website for the specific local business below. Each site you build must look distinctly different from any template — different palette, fonts, layout choices, copy tone. NEVER fall back to a generic SaaS purple-gradient look.
+  const prompt = `You are an elite web designer at a top-tier creative agency. Your sites win Awwwards Site of the Day and FWA awards. A flagship site from your studio costs $15,000+. You are designing a one-off, hand-crafted luxury website for the specific local business below. When the business owner sees this site, they need to IMMEDIATELY want it for their business — it should feel impossible to refuse.
 
-═══ BUSINESS DATA (use exactly as-is, never invent facts) ═══
+This is NOT a template. NOT a starter. NOT generic. This is a bespoke flagship.
+
+═══ BUSINESS DATA (use exactly as-is — never invent facts) ═══
 Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address || "Address not listed"}
@@ -281,43 +283,128 @@ Rating: ${biz.rating}★ from ${biz.review_count} Google reviews
 Hours: ${hoursBlock}
 Description: ${biz.description || "(none)"}
 
-═══ REAL GOOGLE REVIEWS (use the text VERBATIM in a testimonial section) ═══
+═══ REAL GOOGLE REVIEWS (use VERBATIM — these are real customers) ═══
 ${reviewsBlock}
 
 ═══ AVAILABLE PHOTOS (real Google Place photos — embed via these URLs) ═══
 ${photosBlock}
 
-═══ CREATIVE BRIEF — make distinctive choices for THIS business ═══
-1. PALETTE: Pick 3–5 colors that match the business's identity (a salon ≠ an auto shop ≠ a restaurant). Avoid the cliché purple/indigo gradient unless it genuinely fits.
-2. TYPOGRAPHY: Pick a Google Fonts pairing that fits the brand mood. Don't default to Inter. Try pairings like Fraunces+Inter, Cormorant+Manrope, Bebas+Barlow, DM Serif+DM Sans, Space Grotesk+Space Mono, Playfair+Lato, Outfit+Lora, Archivo+Newsreader, etc.
-3. DESIGN DIRECTION: Pick ONE clear direction — editorial/magazine, swiss-minimal, brutalist, glassmorphism, organic curves, art-deco, retro/80s, neo-cyber, warm cozy, sharp industrial, soft luxe, etc. Commit to it across the whole page.
-4. LAYOUT: Vary the hero (centered, split, full-bleed image, off-center asymmetric, etc). Vary card styles. Vary section transitions.
-5. SIGNATURE ELEMENT: Add ONE memorable visual element — a custom blob/shape, a marquee, an unusual grid, a creative cursor effect, an angled section, a duotone image treatment, etc.
-6. COPY VOICE: Match the business — luxe formal for high-end salons, energetic and bold for gyms, warm and storytelling for restaurants, trustworthy and precise for medical/dental, etc.
+═══ THE WOW BAR — NON-NEGOTIABLE QUALITY STANDARDS ═══
 
-═══ STRUCTURE (all required, but layout and styling unique) ═══
-- Sticky responsive navigation with business name/logo + 3–5 nav links + CTA
-- Hero: big business name, tagline, ONE strong CTA, hero image from IMG1
-- About / value-prop section
-- Services (3–6 — invent realistic services that match "${biz.category}", with short descriptions)
-- Gallery (4–7 images from IMG2..IMG8 — varied grid, not a boring 3x3)
-- Testimonials section using the REAL Google reviews verbatim, with reviewer names
-- Contact: phone, address, hours, simple contact form (visual only; onsubmit shows "Sent!" state)
-- Footer
+【1】HERO — visually arresting, pick ONE treatment:
+   • Full-bleed image with mask-reveal animated text
+   • Asymmetric split (oversized headline breaking the grid)
+   • Text-stroke / background-clip:text huge type with image showing through letters
+   • Layered photo composition with parallax depth on scroll
+   • Gradient mesh background with floating photo cards / 3D tilted images
+   • Duotone-treated hero image with brand colors
+   • Marquee headline scrolling horizontally
+   • Animated text entrance (word-by-word stagger fade-up)
+
+【2】TYPOGRAPHY — must POP, not whisper:
+   • Display headlines using clamp() for fluid sizing (e.g., clamp(3rem, 9vw, 8rem))
+   • Mix display + body font with dramatic contrast (weight, style, scale)
+   • Use text-stroke, drop-shadow, or gradient/clip-path text for impact
+   • Vary weight dramatically across the page (300 vs 900 in the same section)
+   • Letter-spacing manipulation: tight for display, expanded for eyebrows
+   • Pairings to consider: Fraunces+Inter, Cormorant+Manrope, Bebas+Barlow,
+     DM Serif Display+DM Sans, Space Grotesk+Space Mono, Playfair+Lato,
+     Outfit+Lora, Archivo Black+Inter, Editorial New-style serifs, Geist Sans,
+     Instrument Serif, Migra. DO NOT default to plain Inter everywhere.
+
+【3】SCROLL-TRIGGERED ANIMATIONS (use IntersectionObserver — no library):
+   • Text fade-up with stagger on entry
+   • Image parallax / scale-up on scroll
+   • Count-up stat animations (animate numbers from 0 to target)
+   • Section dividers that reveal as you scroll
+   • Sticky scroll sections where content transforms
+   • Clip-path reveal masks on images and text
+
+【4】CUSTOM VISUAL TREATMENTS:
+   • Custom inline SVG decorations (organic blobs, waves, geometric patterns)
+   • Duotone or color-washed photos using CSS filters (filter: grayscale + mix-blend)
+   • Glassmorphism panels (backdrop-filter: blur)
+   • Subtle grain/noise texture overlays
+   • Animated gradient meshes
+   • Custom shape clip-paths on images (organic blobs, hexagons, arches)
+   • Color-mix() palette work
+
+【5】INTERACTIVE MICRO-MOMENTS:
+   • Buttons: hover lift + shadow + color shift (NOT flat rects)
+   • Cards: 3D tilt on hover (transform: perspective + rotate3d)
+   • Magnetic CTA buttons that nudge toward cursor (subtle JS)
+   • Smooth scroll with offset for sticky nav
+   • Image galleries: hover zoom, mask reveals, cursor-following effects
+   • Custom cursor dot follower (optional, must be tasteful)
+
+【6】LAYOUT VARIATION — BREAK THE GRID:
+   • Asymmetric splits (image left 60%, text right 40%, or reversed/staggered)
+   • Overlapping elements (negative margins, z-index layering)
+   • Diagonal section dividers using clip-path: polygon
+   • Marquee / scrolling text bands between sections
+   • Bento grids (different sized boxes packed cleverly)
+   • Magazine-style editorial spreads with pull-quotes
+   • DO NOT make every section be "centered heading + 3 columns"
+
+【7】THE SIGNATURE MOMENT — every site needs ONE wow:
+   Pick something memorable just for this business. Examples:
+   • Animated SVG hero illustration
+   • Horizontal-scroll photo gallery with snap
+   • Auto-scrolling "wall of reviews" marquee
+   • Stat counters with animated count-up
+   • 3D card flip / parallax on reviews
+   • Masked-text marquee header
+   • Animated logo / wordmark
+   • Before/after CSS-only slider
+
+═══ STRUCTURE (every section gets its own visual identity) ═══
+1. Sticky nav — logo + 4-5 nav links + prominent CTA. Becomes glassmorphic / colored on scroll.
+2. HERO — wow treatment from above
+3. Trust band / marquee — could be auto-scrolling: "★★★★★ ${biz.rating} • ${biz.review_count} Reviews • Since X • Family Owned • Open Today •" etc.
+4. ABOUT — magazine-style asymmetric, NOT centered. Pull quote from a review. Image with creative crop.
+5. SERVICES (4-6) — varied card design. NOT boring 3-column. Could be bento, alternating L/R, vertical numbered, etc. Invent realistic services for "${biz.category}" with 1-2 sentence descriptions.
+6. GALLERY — creative grid using ALL provided photos. Try bento, masonry, horizontal scroll-snap, or mixed sizes. Apply duotone filters or hover effects.
+7. REVIEWS — feature the BEST review as a huge pull-quote with author. Then a marquee/grid of the others. Use real Google reviews verbatim.
+8. CONTACT — split layout: info (phone, address, hours) + visual contact form. Add a styled "Get in touch" or map placeholder visual.
+9. FOOTER — branded, not just links. Include hours, social-ish icons, copyright.
+
+═══ DESIGN DIRECTION CHOICES (pick ONE and commit) ═══
+Editorial magazine • Swiss minimal with grid lines • Brutalist with raw type •
+Glassmorphism + gradient mesh • Organic curves and blobs • Warm cozy hand-crafted •
+Sharp industrial mono • Soft luxe gold accents • Neo-retro 80s • Y2K nostalgia •
+Mid-century modern • Art-deco geometric • Modern editorial serif •
+Anti-design intentional rough • Premium minimal with lots of whitespace
 
 ═══ TECHNICAL REQUIREMENTS ═══
-- Single self-contained HTML file: ALL CSS inline in <style>, ALL JS inline in <script>. No external CSS files.
-- Mobile-first responsive (test mentally at 375px, 768px, 1280px).
-- Font Awesome 6.5 via CDN OK: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
-- Google Fonts via @import in <style>.
-- Modern CSS: custom properties, grid, flex, clamp(), aspect-ratio.
-- Smooth scroll, IntersectionObserver scroll-triggered animations, hover micro-interactions.
-- Use the photo URLs given — DON'T invent URLs or use placeholders.
-- Set <title>${biz.name}</title>.
-- Performance: no jQuery, no heavy libs.
+• Single self-contained HTML file. ALL CSS inline in <style>. ALL JS inline in <script>.
+• Mobile-first responsive — test mentally at 375px, 768px, 1280px.
+• Font Awesome 6.5 via CDN: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
+• Google Fonts via @import in <style>.
+• Modern CSS only: custom properties, grid, flex, clamp(), aspect-ratio, color-mix() ok.
+• IntersectionObserver for scroll animations (no GSAP / no jQuery / no libs).
+• Use the EXACT photo URLs given — DON'T invent placeholders.
+• <title>${biz.name}</title>
+• Performance: lean. No external libs. Inline SVG instead of icon fonts where it shines.
+• Accessibility: semantic HTML, alt-equivalents, focus states, prefers-reduced-motion respected.
+
+═══ ANTI-PATTERNS — DO NOT ═══
+✗ Generic SaaS purple/indigo gradient look
+✗ Inter as the only font
+✗ Centered hero with subtitle + CTA + image below (boring default)
+✗ Boring 3-column "Our Services" with identical cards
+✗ Centered headings on every section
+✗ Plain rectangle buttons with no hover personality
+✗ Flat boxy cards without depth or character
+✗ Lorem ipsum or generic copy — use the real business voice
+✗ A site that could be ANY business
+
+═══ COPY VOICE — match this business ═══
+Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
-Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences, NO commentary before or after, NO explanations. Just the raw HTML.`;
+Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after. NO explanations.
+
+Give this site real ambition — typical output for a wow-factor flagship is 25,000-40,000 characters of carefully crafted code. Don't shortcut. Don't skim. Make this site WIN.`;
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
 
@@ -455,25 +542,41 @@ app.get("/", (_, res) => res.json({
 //
 // Strategy:
 //  - If user picked a category: paginate that one query (up to 60 results)
-//  - If broad search: run many small-business queries in parallel — these
-//    are categories far more likely to lack a website (barber, nails, taqueria,
+//  - If broad search: run 55+ small-business queries in parallel — categories
+//    far more likely to lack a website (barber, nails, taqueria, food truck,
 //    tailor, handyman, locksmith, etc.) than "restaurants in X" which mostly
 //    surfaces big chains that already have sites
-//  - Fetch details with concurrency, stop once we have `limit` no-website hits
+//  - Fetch details with concurrency 10, stop once we have `limit` no-website hits
 app.post("/api/discover", async (req, res) => {
   try {
-    const { area, category = "", limit = 20 } = req.body;
+    const { area, category = "", limit = 50 } = req.body;
     if (!area)  return res.status(400).json({ error: "area required" });
     if (!GKEY)  return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
 
-    // Small-biz categories with high "no website" rate
+    // 55 small-biz categories with high "no website" rate, grouped by intent
     const SMALL_BIZ = [
-      "barber shops", "nail salons", "tattoo shops", "tailors",
-      "auto repair", "tire shops", "car detailing", "locksmiths",
+      // Personal care & beauty
+      "barber shops", "nail salons", "hair salons", "beauty salons",
+      "tattoo shops", "piercing studios", "lash studios", "brow studios",
+      "tailors", "dry cleaners", "shoe repair", "massage therapists",
+      // Auto
+      "auto repair", "tire shops", "car detailing", "car wash",
+      "auto body shops", "oil change shops", "mobile mechanics", "auto glass repair",
+      // Food
       "taquerias", "food trucks", "donut shops", "ice cream shops",
-      "convenience stores", "ethnic markets", "florists", "bakeries",
-      "handymen", "lawn care", "pet groomers", "tax preparers",
-      "small family restaurants",
+      "small family restaurants", "bakeries", "sandwich shops", "pizzerias",
+      "bbq joints", "juice bars", "smoothie shops", "boba tea shops",
+      "halal restaurants", "vietnamese restaurants", "ethiopian restaurants",
+      // Home & services
+      "handymen", "locksmiths", "lawn care", "plumbers",
+      "electricians", "cleaning services", "pet groomers", "junk removal",
+      "moving companies", "painters", "fence contractors", "hvac repair",
+      // Retail
+      "convenience stores", "ethnic markets", "florists", "smoke shops",
+      "thrift stores", "consignment shops",
+      // Professional
+      "tax preparers", "notaries", "tutors", "music lessons",
+      "dance studios", "martial arts dojos", "photographers",
     ];
 
     // Build query plan
@@ -514,7 +617,7 @@ app.post("/api/discover", async (req, res) => {
     const withoutWebsite = [];
     let idx = 0;
     let detailsChecked = 0;
-    const CONCURRENCY = 8;
+    const CONCURRENCY = 12;
 
     const worker = async () => {
       while (idx < candidates.length && withoutWebsite.length < limit) {
@@ -537,7 +640,7 @@ app.post("/api/discover", async (req, res) => {
 
     res.json({
       area,
-      category: category || "small-biz mix (21 categories)",
+      category: category || `small-biz mix (${SMALL_BIZ.length} categories)`,
       queries_used: queries.length,
       scanned: candidates.length,
       details_checked: detailsChecked,
