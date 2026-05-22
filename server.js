@@ -95,6 +95,20 @@ async function placesFindPlace(query) {
   return d.candidates?.[0] || null;
 }
 
+// Multi-page Text Search — fetches up to 60 results via next_page_token
+async function placesTextSearchMultiPage(query, maxPages = 3) {
+  const all = [];
+  let pageToken = null;
+  for (let i = 0; i < maxPages; i++) {
+    if (pageToken) await new Promise(r => setTimeout(r, 2000)); // token must mature ~2s
+    const { results, nextPageToken } = await placesTextSearch(query, pageToken);
+    all.push(...results);
+    if (!nextPageToken) break;
+    pageToken = nextPageToken;
+  }
+  return all;
+}
+
 async function placeDetails(placeId) {
   const fields = "place_id,name,formatted_address,formatted_phone_number,international_phone_number,rating,user_ratings_total,opening_hours,website,types,reviews,editorial_summary,business_status,geometry,photos,url";
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&key=${GKEY}&language=en&reviews_no_translations=true`;
@@ -438,59 +452,95 @@ app.get("/", (_, res) => res.json({
 }));
 
 // DISCOVER — real Google search filtered to businesses WITHOUT a website
+//
+// Strategy:
+//  - If user picked a category: paginate that one query (up to 60 results)
+//  - If broad search: run many small-business queries in parallel — these
+//    are categories far more likely to lack a website (barber, nails, taqueria,
+//    tailor, handyman, locksmith, etc.) than "restaurants in X" which mostly
+//    surfaces big chains that already have sites
+//  - Fetch details with concurrency, stop once we have `limit` no-website hits
 app.post("/api/discover", async (req, res) => {
   try {
-    const { area, category = "", limit = 12 } = req.body;
+    const { area, category = "", limit = 20 } = req.body;
     if (!area)  return res.status(400).json({ error: "area required" });
     if (!GKEY)  return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
 
-    // Build queries — focused if category given, broad otherwise
-    const queries = category
-      ? [`${category} in ${area}`]
-      : [
-          `restaurants in ${area}`,
-          `salons in ${area}`,
-          `auto repair shops in ${area}`,
-          `dentists in ${area}`,
-          `gyms in ${area}`,
-          `cafes in ${area}`,
-        ];
+    // Small-biz categories with high "no website" rate
+    const SMALL_BIZ = [
+      "barber shops", "nail salons", "tattoo shops", "tailors",
+      "auto repair", "tire shops", "car detailing", "locksmiths",
+      "taquerias", "food trucks", "donut shops", "ice cream shops",
+      "convenience stores", "ethnic markets", "florists", "bakeries",
+      "handymen", "lawn care", "pet groomers", "tax preparers",
+      "small family restaurants",
+    ];
 
+    // Build query plan
+    let queries, paginate;
+    if (category) {
+      queries  = [`${category} in ${area}`];
+      paginate = true;   // one focused query → fetch all 60 results
+    } else {
+      queries  = SMALL_BIZ.map(q => `${q} in ${area}`);
+      paginate = false;  // many queries → just first 20 each is plenty
+    }
+
+    // Run all searches in parallel
+    const searchPromises = queries.map(async q => {
+      try {
+        return paginate
+          ? await placesTextSearchMultiPage(q, 3)
+          : (await placesTextSearch(q)).results;
+      } catch (e) {
+        console.warn("⚠️ query failed", q, e.message);
+        return [];
+      }
+    });
+    const allResults = (await Promise.all(searchPromises)).flat();
+
+    // Dedupe by place_id
     const seen = new Set();
     const candidates = [];
-    for (const q of queries) {
-      try {
-        const { results } = await placesTextSearch(q);
-        for (const r of results.slice(0, 10)) {
-          if (!seen.has(r.place_id)) {
-            seen.add(r.place_id);
-            candidates.push(r);
-          }
-        }
-        if (candidates.length > 40) break;
-      } catch (e) {
-        console.warn("query failed", q, e.message);
+    for (const r of allResults) {
+      if (r.place_id && !seen.has(r.place_id)) {
+        seen.add(r.place_id);
+        candidates.push(r);
       }
     }
+    console.log(`🔍 ${area} — ${queries.length} queries → ${candidates.length} unique candidates`);
 
-    // Fetch details for each, keep only no-website
+    // Fetch details with concurrency; stop once we have `limit` no-website hits
     const withoutWebsite = [];
-    for (const c of candidates) {
-      if (withoutWebsite.length >= limit) break;
-      try {
-        const p = await placeDetails(c.place_id);
-        if (!p.website && p.business_status !== "CLOSED_PERMANENTLY") {
-          withoutWebsite.push(shapeBusiness(p));
+    let idx = 0;
+    let detailsChecked = 0;
+    const CONCURRENCY = 8;
+
+    const worker = async () => {
+      while (idx < candidates.length && withoutWebsite.length < limit) {
+        const my = idx++;
+        const c  = candidates[my];
+        try {
+          const p = await placeDetails(c.place_id);
+          detailsChecked++;
+          if (!p.website && p.business_status !== "CLOSED_PERMANENTLY") {
+            withoutWebsite.push(shapeBusiness(p));
+          }
+        } catch (e) {
+          console.warn("details failed", c.place_id, e.message);
         }
-      } catch (e) {
-        console.warn("details failed", c.place_id, e.message);
       }
-    }
+    };
+    await Promise.all(Array(CONCURRENCY).fill(0).map(() => worker()));
+
+    console.log(`✅ ${area}: checked ${detailsChecked}/${candidates.length}, found ${withoutWebsite.length} without website`);
 
     res.json({
       area,
-      category: category || "all",
+      category: category || "small-biz mix (21 categories)",
+      queries_used: queries.length,
       scanned: candidates.length,
+      details_checked: detailsChecked,
       count: withoutWebsite.length,
       businesses: withoutWebsite,
     });
