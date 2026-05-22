@@ -1,290 +1,697 @@
+// SiteSprint v9 — Real Google data + AI-unique sites per business
 require("dotenv").config();
-const express = require("express");
-const cors    = require("cors");
-const { Pool } = require("pg");
-const Anthropic = require("@anthropic-ai/sdk"); // بازگشت باشکوه کلاود!
+const express   = require("express");
+const cors      = require("cors");
+const { Pool }  = require("pg");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app  = express();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
-
 app.use(cors({ origin: "*" }));
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
-// راه‌اندازی کلاود با کلید شما
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_KEY
+const ai   = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
+const GKEY = process.env.GOOGLE_API_KEY;
+
+// ─── DB INIT ──────────────────────────────────────────────────────────────────
+async function initDB() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS businesses (
+    id SERIAL PRIMARY KEY,
+    place_id TEXT,
+    name TEXT NOT NULL,
+    address TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    rating NUMERIC(2,1) DEFAULT 0,
+    review_count INT DEFAULT 0,
+    hours_json JSONB DEFAULT '[]'::jsonb,
+    website TEXT DEFAULT '',
+    google_url TEXT DEFAULT '',
+    photos_json JSONB DEFAULT '[]'::jsonb,
+    reviews_json JSONB DEFAULT '[]'::jsonb,
+    description TEXT DEFAULT '',
+    location_lat NUMERIC,
+    location_lng NUMERIC,
+    status TEXT DEFAULT 'prospect',
+    notes TEXT DEFAULT '',
+    area_searched TEXT DEFAULT '',
+    preview_slug TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );`);
+
+  // Safe migrations for existing DBs
+  const cols = [
+    ["place_id", "TEXT"],
+    ["photos_json", "JSONB DEFAULT '[]'::jsonb"],
+    ["reviews_json", "JSONB DEFAULT '[]'::jsonb"],
+    ["hours_json", "JSONB DEFAULT '[]'::jsonb"],
+    ["description", "TEXT DEFAULT ''"],
+    ["location_lat", "NUMERIC"],
+    ["location_lng", "NUMERIC"],
+    ["preview_slug", "TEXT DEFAULT ''"],
+    ["google_url", "TEXT DEFAULT ''"],
+    ["notes", "TEXT DEFAULT ''"],
+  ];
+  for (const [c, t] of cols) {
+    try { await pool.query(`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS ${c} ${t};`); }
+    catch (e) { console.warn(`migrate ${c}:`, e.message); }
+  }
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS generated_sites (
+    id SERIAL PRIMARY KEY,
+    business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
+    slug TEXT UNIQUE NOT NULL,
+    html TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );`);
+  console.log("✅ DB ready");
+}
+
+// ─── GOOGLE PLACES HELPERS ────────────────────────────────────────────────────
+async function gfetch(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+  if (!r.ok) throw new Error(`Google HTTP ${r.status}`);
+  return r.json();
+}
+
+async function placesTextSearch(query, pageToken = null) {
+  let url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${GKEY}&language=en`;
+  if (pageToken) url += `&pagetoken=${pageToken}`;
+  const d = await gfetch(url);
+  if (d.status !== "OK" && d.status !== "ZERO_RESULTS")
+    throw new Error(`TextSearch ${d.status}: ${d.error_message || ""}`);
+  return { results: d.results || [], nextPageToken: d.next_page_token };
+}
+
+async function placesFindPlace(query) {
+  const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=place_id,name,formatted_address&key=${GKEY}`;
+  const d = await gfetch(url);
+  if (d.status !== "OK" && d.status !== "ZERO_RESULTS")
+    throw new Error(`FindPlace ${d.status}`);
+  return d.candidates?.[0] || null;
+}
+
+// Multi-page Text Search — fetches up to 60 results via next_page_token
+async function placesTextSearchMultiPage(query, maxPages = 3) {
+  const all = [];
+  let pageToken = null;
+  for (let i = 0; i < maxPages; i++) {
+    if (pageToken) await new Promise(r => setTimeout(r, 2000)); // token must mature ~2s
+    const { results, nextPageToken } = await placesTextSearch(query, pageToken);
+    all.push(...results);
+    if (!nextPageToken) break;
+    pageToken = nextPageToken;
+  }
+  return all;
+}
+
+async function placeDetails(placeId) {
+  const fields = "place_id,name,formatted_address,formatted_phone_number,international_phone_number,rating,user_ratings_total,opening_hours,website,types,reviews,editorial_summary,business_status,geometry,photos,url";
+  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&key=${GKEY}&language=en&reviews_no_translations=true`;
+  const d = await gfetch(url);
+  if (d.status !== "OK") throw new Error(`Details ${d.status}: ${d.error_message || ""}`);
+  return d.result;
+}
+
+function mapCategory(types = [], name = "") {
+  const t = (types.join(" ") + " " + name).toLowerCase();
+  if (/hair|beauty|salon|nail|spa|barber/.test(t))            return "Salon & Spa";
+  if (/dentist|dental|orthodont/.test(t))                     return "Dental";
+  if (/car_repair|auto_repair|mechanic|car_wash|tire/.test(t))return "Auto Repair";
+  if (/restaurant|food|meal_takeaway|bakery|pizza/.test(t))   return "Restaurant";
+  if (/gym|fitness|yoga|crossfit/.test(t))                    return "Gym & Fitness";
+  if (/cafe|coffee/.test(t))                                  return "Cafe & Coffee";
+  if (/lodging|hotel|motel|inn/.test(t))                      return "Hotel";
+  if (/doctor|hospital|clinic|physician|medical/.test(t))     return "Medical";
+  if (/lawyer|attorney|legal/.test(t))                        return "Legal";
+  if (/real_estate/.test(t))                                  return "Real Estate";
+  if (/school|university|education/.test(t))                  return "Education";
+  if (/clean/.test(t))                                        return "Cleaning";
+  if (/plumb/.test(t))                                        return "Plumbing";
+  if (/electric/.test(t))                                     return "Electrician";
+  if (/roof/.test(t))                                         return "Roofing";
+  if (/landscap|lawn/.test(t))                                return "Landscaping";
+  if (/pet|veterinar/.test(t))                                return "Pet Services";
+  if (/laundry|dry_clean/.test(t))                            return "Laundry";
+  if (/store|shop|grocer|market/.test(t))                     return "Retail";
+  return "Local Business";
+}
+
+// Shape a Place Details result into the business object we use everywhere
+function shapeBusiness(p) {
+  const photos = (p.photos || []).slice(0, 8).map(ph =>
+    `/photo?ref=${encodeURIComponent(ph.photo_reference)}&w=1600`
+  );
+  const reviews = (p.reviews || []).map(r => ({
+    name:   r.author_name,
+    rating: r.rating,
+    text:   (r.text || "").slice(0, 500),
+    time:   r.relative_time_description || "",
+    profile_photo: r.profile_photo_url || "",
+  }));
+  return {
+    place_id:      p.place_id,
+    name:          p.name,
+    address:       p.formatted_address || "",
+    phone:         p.formatted_phone_number || p.international_phone_number || "",
+    rating:        p.rating || 0,
+    review_count:  p.user_ratings_total || 0,
+    hours:         p.opening_hours?.weekday_text || [],
+    website:       p.website || "",
+    google_url:    p.url || "",
+    category:      mapCategory(p.types || [], p.name),
+    description:   p.editorial_summary?.overview || "",
+    photos,
+    reviews,
+    location:      p.geometry?.location || null,
+    open_now:      p.opening_hours?.open_now ?? null,
+  };
+}
+
+// ─── URL RESOLUTION ───────────────────────────────────────────────────────────
+async function resolveGoogleUrl(url) {
+  try {
+    const r = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    return r.url;
+  } catch (e) {
+    console.error("URL resolve failed:", e.message);
+    return url;
+  }
+}
+
+function extractPlaceIdFromUrl(url) {
+  // Standard CID
+  const m1 = url.match(/!1s(ChIJ[A-Za-z0-9_-]+)/);
+  if (m1) return m1[1];
+  // ?place_id= param
+  const m2 = url.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
+  if (m2) return m2[1];
+  return null;
+}
+
+function extractCoordsFromUrl(url) {
+  const m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  const m2 = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+  if (m2) return { lat: parseFloat(m2[1]), lng: parseFloat(m2[2]) };
+  return null;
+}
+
+function extractNameFromUrl(url) {
+  const m = url.match(/\/place\/([^/@?]+)/);
+  if (m) return decodeURIComponent(m[1].replace(/\+/g, " "));
+  return null;
+}
+
+async function urlToPlaceId(url) {
+  const resolved = await resolveGoogleUrl(url);
+  console.log("📍 Resolved:", resolved.slice(0, 200));
+
+  let placeId = extractPlaceIdFromUrl(resolved);
+  if (placeId) return placeId;
+
+  const name = extractNameFromUrl(resolved);
+  const coords = extractCoordsFromUrl(resolved);
+
+  if (name) {
+    const q = coords ? `${name} near ${coords.lat},${coords.lng}` : name;
+    console.log("🔍 Falling back to FindPlace:", q);
+    const c = await placesFindPlace(q);
+    if (c?.place_id) return c.place_id;
+  }
+
+  throw new Error("Couldn't extract a place from this URL. Use the Discover tab and search the business by name instead.");
+}
+
+// ─── PHOTO PROXY (keeps API key server-side) ──────────────────────────────────
+app.get("/photo", async (req, res) => {
+  try {
+    const { ref, w = 1600 } = req.query;
+    if (!ref)  return res.status(400).send("ref required");
+    if (!GKEY) return res.status(500).send("Google API key not set");
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${w}&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) return res.status(r.status).send("photo fetch failed");
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.setHeader("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    res.send(buf);
+  } catch (e) {
+    res.status(500).send(e.message);
+  }
 });
 
-// ─── DB INIT ─────────────────────────────────────────────────────────────────
-async function initDB() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS businesses (
-        id           SERIAL PRIMARY KEY,
-        name         TEXT NOT NULL,
-        address      TEXT DEFAULT '',
-        phone        TEXT DEFAULT '',
-        category     TEXT DEFAULT '',
-        rating       NUMERIC(2,1) DEFAULT 0,
-        review_count INT DEFAULT 0,
-        hours        TEXT DEFAULT '',
-        website      TEXT DEFAULT '',
-        google_url   TEXT DEFAULT '',
-        status       TEXT DEFAULT 'prospect',
-        notes        TEXT DEFAULT '',
-        area_searched TEXT DEFAULT '',
-        preview_slug  TEXT DEFAULT '',
-        created_at   TIMESTAMPTZ DEFAULT NOW(),
-        updated_at   TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    await pool.query(`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS preview_slug TEXT DEFAULT '';`);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS generated_sites (
-        id          SERIAL PRIMARY KEY,
-        business_id INT REFERENCES businesses(id) ON DELETE CASCADE,
-        slug        TEXT UNIQUE NOT NULL,
-        html        TEXT NOT NULL,
-        created_at  TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    console.log("✅ Database synced successfully.");
-  } catch (err) {
-    console.error("❌ DB Init Error:", err);
-  }
-}
+// ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
+async function generateUniqueHTML(biz) {
+  const photos  = (biz.photos || []).slice(0, 8);
+  const reviews = (biz.reviews || []).slice(0, 5);
 
-// ─── IMAGE BANK (انبار عکس‌های لوکس برای تزریق به طراحی کلاود) ───────────────
-function getIndustryImages(category) {
-  const cat = (category || "business").toLowerCase();
-  
-  let imgs = {
-    hero: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80",
-    g1: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
-    g2: "https://images.unsplash.com/photo-1542744094-3a31f103e35f?auto=format&fit=crop&w=800&q=80",
-    g3: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80"
-  };
+  const reviewsBlock = reviews.length
+    ? reviews.map((r, i) =>
+        `R${i+1}: ${r.name} (${r.rating}★, ${r.time}): "${(r.text || "").slice(0, 280)}"`
+      ).join("\n")
+    : "(no Google reviews available)";
 
-  if (cat.includes("salon") || cat.includes("beauty") || cat.includes("hair")) {
-    imgs = {
-      hero: "https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1600&q=80",
-      g1: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
-      g2: "https://images.unsplash.com/photo-1605497746444-ac9da58480a8?auto=format&fit=crop&w=800&q=80",
-      g3: "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=800&q=80"
-    };
-  } else if (cat.includes("repair") || cat.includes("auto") || cat.includes("glass")) {
-    imgs = {
-      hero: "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?auto=format&fit=crop&w=1600&q=80",
-      g1: "https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&w=800&q=80",
-      g2: "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=800&q=80",
-      g3: "https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?auto=format&fit=crop&w=800&q=80"
-    };
-  } else if (cat.includes("rest") || cat.includes("food") || cat.includes("grill")) {
-    imgs = {
-      hero: "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=1600&q=80",
-      g1: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
-      g2: "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
-      g3: "https://images.unsplash.com/photo-1606787366850-de6330128bfc?auto=format&fit=crop&w=800&q=80"
-    };
-  }
-  return imgs;
-}
+  const photosBlock = photos.length
+    ? photos.map((u, i) => `IMG${i+1}: ${u}`).join("\n")
+    : "(no Google photos — use only solid colors / gradients, no broken images)";
 
-// ─── CLAUDE 3.5 SONNET GENERATOR (پرچمدار طراحی) ──────────────────────────────
-async function generatePremiumHTML(biz) {
-  const images = getIndustryImages(biz.category);
+  const hoursBlock = biz.hours?.length ? biz.hours.join(" | ") : "Hours not listed";
 
-  const prompt = `You are a world-class, elite UI/UX web designer (Awwwards winner level).
-Generate an incredibly stunning, high-end single-page landing page for this business:
+  const prompt = `You are an award-winning web designer. Design and code a ONE-OF-A-KIND single-page website for the specific local business below. Each site you build must look distinctly different from any template — different palette, fonts, layout choices, copy tone. NEVER fall back to a generic SaaS purple-gradient look.
+
+═══ BUSINESS DATA (use exactly as-is, never invent facts) ═══
 Name: ${biz.name}
 Category: ${biz.category}
-Address: ${biz.address}
-Phone: ${biz.phone}
-Rating: ${biz.rating} (${biz.review_count} reviews)
+Address: ${biz.address || "Address not listed"}
+Phone: ${biz.phone || "Phone not listed"}
+Rating: ${biz.rating}★ from ${biz.review_count} Google reviews
+Hours: ${hoursBlock}
+Description: ${biz.description || "(none)"}
 
-STRICT DESIGN DIRECTION (Make it look like a $10,000 agency website):
-1. Use Tailwind CSS via CDN.
-2. Immersive Color Palette: Dark mode glassmorphism with neon/glowing accent colors tailored to the industry (e.g. gold/rose for beauty, cyan for auto, crimson for restaurants). Use beautiful gradients and blur backdrops.
-3. Typography: Include FontAwesome icons. Use elegant Google Fonts (Space Grotesk or Syne for headings, Inter for body text).
-4. Fluid Animations: Include AOS library (Animate on Scroll). Apply 'data-aos="fade-up"' to layout containers.
-5. Elite Layout Structure: 
-   - A sticky glassmorphic Navigation bar.
-   - A jaw-dropping Hero section with a massive bold headline and two CTA buttons.
-   - An interactive floating Stats counter grid (Rating, Reviews).
-   - A detailed Premium Services grid with hover effects.
-   - A stunning Visual Gallery grid (3 items).
-   - A high-converting Contact Form.
+═══ REAL GOOGLE REVIEWS (use the text VERBATIM in a testimonial section) ═══
+${reviewsBlock}
 
-🚨 CRITICAL IMAGE RULE (CSS INJECTION TRICK):
-Do NOT write any <img src="..."> tags for the hero or gallery to prevent broken 404 links. 
-I will inject the images via CSS. You MUST use exactly these predefined CSS classes on empty <div> elements to show images:
-- For the Hero Section background container, add the class: 'bg-hero-img'
-- For the 3 Visual Gallery grid items, use exactly this structure:
-  <div class="gallery-img-1 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in"></div>
-  <div class="gallery-img-2 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in" data-aos-delay="100"></div>
-  <div class="gallery-img-3 rounded-2xl shadow-xl h-72 w-full" data-aos="zoom-in" data-aos-delay="200"></div>
+═══ AVAILABLE PHOTOS (real Google Place photos — embed via these URLs) ═══
+${photosBlock}
 
-Return ONLY the raw HTML/CSS/JS code starting with <!DOCTYPE html>. No markdown blocks.`;
+═══ CREATIVE BRIEF — make distinctive choices for THIS business ═══
+1. PALETTE: Pick 3–5 colors that match the business's identity (a salon ≠ an auto shop ≠ a restaurant). Avoid the cliché purple/indigo gradient unless it genuinely fits.
+2. TYPOGRAPHY: Pick a Google Fonts pairing that fits the brand mood. Don't default to Inter. Try pairings like Fraunces+Inter, Cormorant+Manrope, Bebas+Barlow, DM Serif+DM Sans, Space Grotesk+Space Mono, Playfair+Lato, Outfit+Lora, Archivo+Newsreader, etc.
+3. DESIGN DIRECTION: Pick ONE clear direction — editorial/magazine, swiss-minimal, brutalist, glassmorphism, organic curves, art-deco, retro/80s, neo-cyber, warm cozy, sharp industrial, soft luxe, etc. Commit to it across the whole page.
+4. LAYOUT: Vary the hero (centered, split, full-bleed image, off-center asymmetric, etc). Vary card styles. Vary section transitions.
+5. SIGNATURE ELEMENT: Add ONE memorable visual element — a custom blob/shape, a marquee, an unusual grid, a creative cursor effect, an angled section, a duotone image treatment, etc.
+6. COPY VOICE: Match the business — luxe formal for high-end salons, energetic and bold for gyms, warm and storytelling for restaurants, trustworthy and precise for medical/dental, etc.
 
-  try {
-    // 💥 استفاده از نسخه دقیق، رسمی و زنده کلاود سونات (بدون ارور ۴۰۴)
-    const response = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 8000,
-      messages: [{ role: "user", content: prompt }],
+═══ STRUCTURE (all required, but layout and styling unique) ═══
+- Sticky responsive navigation with business name/logo + 3–5 nav links + CTA
+- Hero: big business name, tagline, ONE strong CTA, hero image from IMG1
+- About / value-prop section
+- Services (3–6 — invent realistic services that match "${biz.category}", with short descriptions)
+- Gallery (4–7 images from IMG2..IMG8 — varied grid, not a boring 3x3)
+- Testimonials section using the REAL Google reviews verbatim, with reviewer names
+- Contact: phone, address, hours, simple contact form (visual only; onsubmit shows "Sent!" state)
+- Footer
+
+═══ TECHNICAL REQUIREMENTS ═══
+- Single self-contained HTML file: ALL CSS inline in <style>, ALL JS inline in <script>. No external CSS files.
+- Mobile-first responsive (test mentally at 375px, 768px, 1280px).
+- Font Awesome 6.5 via CDN OK: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
+- Google Fonts via @import in <style>.
+- Modern CSS: custom properties, grid, flex, clamp(), aspect-ratio.
+- Smooth scroll, IntersectionObserver scroll-triggered animations, hover micro-interactions.
+- Use the photo URLs given — DON'T invent URLs or use placeholders.
+- Set <title>${biz.name}</title>.
+- Performance: no jQuery, no heavy libs.
+
+═══ OUTPUT FORMAT ═══
+Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences, NO commentary before or after, NO explanations. Just the raw HTML.`;
+
+  console.log(`🤖 Calling Claude for: ${biz.name}`);
+
+  // Multi-turn generation with auto-continuation if max_tokens is hit
+  const messages = [{ role: "user", content: prompt }];
+  let html = "";
+  let attempts = 0;
+  const MAX_ATTEMPTS = 5;       // safety cap; usually 1-2 calls is enough
+  const PER_CALL_TOKENS = 32000; // Sonnet 4.6 supports up to 64K; 32K is a safe per-call ceiling
+
+  while (attempts < MAX_ATTEMPTS) {
+    attempts++;
+    // Use streaming — required by Anthropic API for requests where
+    // max_tokens could push total time over 10 minutes.
+    // .finalMessage() awaits completion and returns the same shape as create().
+    const stream = ai.messages.stream({
+      model: "claude-sonnet-4-6",
+      max_tokens: PER_CALL_TOKENS,
+      messages,
+    });
+    const r = await stream.finalMessage();
+
+    const chunk = r.content[0]?.text || "";
+    html += chunk;
+
+    console.log(`📦 ${biz.name} chunk ${attempts}: +${chunk.length} chars (stop_reason=${r.stop_reason}, total=${html.length})`);
+
+    // Done when the model finishes naturally
+    if (r.stop_reason !== "max_tokens") break;
+
+    // Hit the per-call cap — ask Claude to continue from the exact cutoff
+    messages.push({ role: "assistant", content: chunk });
+    messages.push({
+      role: "user",
+      content:
+        "Continue the HTML exactly where you stopped. Do NOT repeat any content already written. " +
+        "Do NOT add any preamble, explanation, or markdown. Output only the next characters of the HTML " +
+        "so when concatenated to what you already wrote it forms one valid document ending in </html>.",
     });
 
-    let htmlContent = response.content[0].text.trim();
-    if (htmlContent.startsWith("```html")) htmlContent = htmlContent.replace(/```html/, "");
-    if (htmlContent.endsWith("```")) htmlContent = htmlContent.slice(0, -3);
-    
-    // تزریق مستقیم عکس‌های لوکس به کدهای شاهکار کلاود
-    const cssInjection = `
-    <style>
-      .bg-hero-img {
-        background-image: linear-gradient(rgba(3, 3, 7, 0.65), rgba(3, 3, 7, 0.98)), url('${images.hero}');
-        background-size: cover; 
-        background-position: center;
-      }
-      .gallery-img-1 { background-image: url('${images.g1}'); background-size: cover; background-position: center; transition: transform 0.5s; }
-      .gallery-img-1:hover { transform: scale(1.05); }
-      .gallery-img-2 { background-image: url('${images.g2}'); background-size: cover; background-position: center; transition: transform 0.5s; }
-      .gallery-img-2:hover { transform: scale(1.05); }
-      .gallery-img-3 { background-image: url('${images.g3}'); background-size: cover; background-position: center; transition: transform 0.5s; }
-      .gallery-img-3:hover { transform: scale(1.05); }
-    </style>
-    </head>`;
-
-    if (htmlContent.includes("</head>")) {
-      htmlContent = htmlContent.replace("</head>", cssInjection);
-    } else {
-      htmlContent += cssInjection.replace("</head>", ""); 
-    }
-    
-    return htmlContent.trim();
-  } catch (error) {
-    console.error("🔴 Claude Sonnet Error:", error.message);
-    return `<!DOCTYPE html><html><head><title>${biz.name}</title><style>body{background:#090d16;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}h1{color:#6366f1;font-size:2.5rem}</style></head><body><div><h1>${biz.name}</h1><p>Presentation is syncing. Please reload.</p></div></body></html>`;
+    // Extra safety: if we already have </html> somehow, stop
+    if (html.toLowerCase().includes("</html>")) break;
   }
+
+  // Strip any accidental markdown fences at the boundaries
+  html = html.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+
+  // Validate structure
+  const lc = html.toLowerCase();
+  if (!lc.includes("<!doctype") && !lc.startsWith("<html")) {
+    throw new Error("AI did not return valid HTML (no doctype/html tag)");
+  }
+  if (html.length < 2000) {
+    throw new Error("AI returned suspiciously short HTML");
+  }
+  if (!lc.includes("</html>")) {
+    // Last-resort recovery: best-effort close so the page at least renders
+    console.warn(`⚠️ ${biz.name}: HTML missing </html> after ${attempts} attempts — auto-closing`);
+    if (!lc.includes("</body>")) html += "\n</body>";
+    html += "\n</html>";
+  }
+  console.log(`✅ ${biz.name}: HTML done — ${html.length} chars, ${attempts} call(s)`);
+  return html;
+}
+
+// ─── UPSERT business by place_id ──────────────────────────────────────────────
+async function upsertBusiness(biz, areaSearched = "") {
+  if (biz.place_id) {
+    const existing = await pool.query("SELECT * FROM businesses WHERE place_id=$1", [biz.place_id]);
+    if (existing.rows.length) {
+      const updated = await pool.query(
+        `UPDATE businesses SET
+          name=$1, address=$2, phone=$3, category=$4, rating=$5, review_count=$6,
+          hours_json=$7, website=$8, photos_json=$9, reviews_json=$10, description=$11,
+          location_lat=$12, location_lng=$13, google_url=$14, updated_at=NOW()
+         WHERE place_id=$15 RETURNING *`,
+        [biz.name, biz.address, biz.phone, biz.category, biz.rating, biz.review_count,
+         JSON.stringify(biz.hours || []), biz.website,
+         JSON.stringify(biz.photos || []), JSON.stringify(biz.reviews || []),
+         biz.description, biz.location?.lat ?? null, biz.location?.lng ?? null,
+         biz.google_url || "", biz.place_id]
+      );
+      return updated.rows[0];
+    }
+  }
+  const inserted = await pool.query(
+    `INSERT INTO businesses
+       (place_id, name, address, phone, category, rating, review_count,
+        hours_json, website, photos_json, reviews_json, description,
+        location_lat, location_lng, google_url, area_searched, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'prospect')
+     RETURNING *`,
+    [biz.place_id || null, biz.name, biz.address, biz.phone, biz.category,
+     biz.rating, biz.review_count,
+     JSON.stringify(biz.hours || []), biz.website,
+     JSON.stringify(biz.photos || []), JSON.stringify(biz.reviews || []),
+     biz.description, biz.location?.lat ?? null, biz.location?.lng ?? null,
+     biz.google_url || "", areaSearched]
+  );
+  return inserted.rows[0];
+}
+
+async function buildAndSaveSite(biz, areaSearched = "") {
+  const saved = await upsertBusiness(biz, areaSearched);
+
+  let html;
+  try {
+    html = await generateUniqueHTML(biz);
+  } catch (e) {
+    console.error("AI failed, trying once more:", e.message);
+    html = await generateUniqueHTML(biz); // one retry
+  }
+
+  const slug = `b${saved.id}-${Date.now().toString(36)}`;
+  await pool.query(
+    `INSERT INTO generated_sites (business_id, slug, html) VALUES ($1,$2,$3)`,
+    [saved.id, slug, html]
+  );
+  await pool.query(
+    `UPDATE businesses SET preview_slug=$1, status='site shown', updated_at=NOW() WHERE id=$2`,
+    [slug, saved.id]
+  );
+  return { saved: { ...saved, preview_slug: slug }, slug };
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
+app.get("/", (_, res) => res.json({
+  ok: true,
+  service: "SiteSprint v9",
+  google_api: !!GKEY,
+  anthropic_api: !!process.env.ANTHROPIC_KEY,
+}));
 
-app.get("/", (_, res) => res.json({ ok: true, service: "SiteSprint Claude Sonnet Elite Engine" }));
+// DISCOVER — real Google search filtered to businesses WITHOUT a website
+//
+// Strategy:
+//  - If user picked a category: paginate that one query (up to 60 results)
+//  - If broad search: run many small-business queries in parallel — these
+//    are categories far more likely to lack a website (barber, nails, taqueria,
+//    tailor, handyman, locksmith, etc.) than "restaurants in X" which mostly
+//    surfaces big chains that already have sites
+//  - Fetch details with concurrency, stop once we have `limit` no-website hits
+app.post("/api/discover", async (req, res) => {
+  try {
+    const { area, category = "", limit = 20 } = req.body;
+    if (!area)  return res.status(400).json({ error: "area required" });
+    if (!GKEY)  return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
 
-app.get("/api/businesses", async (req, res) => {
-  const { status, q } = req.query;
-  let sql = "SELECT * FROM businesses WHERE 1=1";
-  const params = [];
-  if (status && status !== "all") { sql += ` AND status=$${params.length+1}`; params.push(status); }
-  if (q) { sql += ` AND (name ILIKE $${params.length+1} OR category ILIKE $${params.length+2} OR address ILIKE $${params.length+3})`; params.push(`%${q}%`,`%${q}%`,`%${q}%`); }
-  sql += " ORDER BY created_at DESC";
-  const result = await pool.query(sql, params);
-  res.json(result.rows);
+    // Small-biz categories with high "no website" rate
+    const SMALL_BIZ = [
+      "barber shops", "nail salons", "tattoo shops", "tailors",
+      "auto repair", "tire shops", "car detailing", "locksmiths",
+      "taquerias", "food trucks", "donut shops", "ice cream shops",
+      "convenience stores", "ethnic markets", "florists", "bakeries",
+      "handymen", "lawn care", "pet groomers", "tax preparers",
+      "small family restaurants",
+    ];
+
+    // Build query plan
+    let queries, paginate;
+    if (category) {
+      queries  = [`${category} in ${area}`];
+      paginate = true;   // one focused query → fetch all 60 results
+    } else {
+      queries  = SMALL_BIZ.map(q => `${q} in ${area}`);
+      paginate = false;  // many queries → just first 20 each is plenty
+    }
+
+    // Run all searches in parallel
+    const searchPromises = queries.map(async q => {
+      try {
+        return paginate
+          ? await placesTextSearchMultiPage(q, 3)
+          : (await placesTextSearch(q)).results;
+      } catch (e) {
+        console.warn("⚠️ query failed", q, e.message);
+        return [];
+      }
+    });
+    const allResults = (await Promise.all(searchPromises)).flat();
+
+    // Dedupe by place_id
+    const seen = new Set();
+    const candidates = [];
+    for (const r of allResults) {
+      if (r.place_id && !seen.has(r.place_id)) {
+        seen.add(r.place_id);
+        candidates.push(r);
+      }
+    }
+    console.log(`🔍 ${area} — ${queries.length} queries → ${candidates.length} unique candidates`);
+
+    // Fetch details with concurrency; stop once we have `limit` no-website hits
+    const withoutWebsite = [];
+    let idx = 0;
+    let detailsChecked = 0;
+    const CONCURRENCY = 8;
+
+    const worker = async () => {
+      while (idx < candidates.length && withoutWebsite.length < limit) {
+        const my = idx++;
+        const c  = candidates[my];
+        try {
+          const p = await placeDetails(c.place_id);
+          detailsChecked++;
+          if (!p.website && p.business_status !== "CLOSED_PERMANENTLY") {
+            withoutWebsite.push(shapeBusiness(p));
+          }
+        } catch (e) {
+          console.warn("details failed", c.place_id, e.message);
+        }
+      }
+    };
+    await Promise.all(Array(CONCURRENCY).fill(0).map(() => worker()));
+
+    console.log(`✅ ${area}: checked ${detailsChecked}/${candidates.length}, found ${withoutWebsite.length} without website`);
+
+    res.json({
+      area,
+      category: category || "small-biz mix (21 categories)",
+      queries_used: queries.length,
+      scanned: candidates.length,
+      details_checked: detailsChecked,
+      count: withoutWebsite.length,
+      businesses: withoutWebsite,
+    });
+  } catch (e) {
+    console.error("🔴 discover:", e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.post("/api/businesses", async (req, res) => {
+// BUILD — fetch full data for a place_id (or accept passed business), generate unique site, save
+app.post("/api/build", async (req, res) => {
   try {
-    const b = req.body;
-    const r = await pool.query(
-      `INSERT INTO businesses (name,address,phone,category,rating,review_count,hours,website,google_url,status,area_searched)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [b.name, b.address||"", b.phone||"", b.category||"", b.rating||0, b.review_count||0,
-       b.hours||"", b.website||"", b.google_url||"", b.status||"prospect", b.area_searched||""]
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { place_id, business, area_searched = "" } = req.body;
+    if (!place_id && !business) return res.status(400).json({ error: "place_id or business required" });
+    if (!GKEY)  return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
+
+    // Always re-fetch from Google when we have a place_id (fresh photos/reviews)
+    let biz;
+    if (place_id) {
+      const p = await placeDetails(place_id);
+      biz = shapeBusiness(p);
+    } else {
+      biz = business;
+    }
+
+    const { saved, slug } = await buildAndSaveSite(biz, area_searched);
+    res.json({ business: saved, slug, previewUrl: `/preview/${slug}` });
+  } catch (e) {
+    console.error("🔴 build:", e);
+    res.status(500).json({ error: e.message });
   }
+});
+
+// FROM URL — paste any Google Maps URL, including share.google
+app.post("/api/from-url", async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "url required" });
+    if (!GKEY) return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
+
+    const placeId = await urlToPlaceId(url);
+    const p   = await placeDetails(placeId);
+    const biz = shapeBusiness(p);
+    biz.google_url = url;
+
+    const { saved, slug } = await buildAndSaveSite(biz);
+    res.json({ business: saved, slug, previewUrl: `/preview/${slug}` });
+  } catch (e) {
+    console.error("🔴 from-url:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// REBUILD — regenerate a unique site for an existing business
+app.post("/api/rebuild/:id", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: "not found" });
+    const row = r.rows[0];
+
+    // Refresh from Google when possible
+    let biz;
+    if (row.place_id) {
+      try {
+        const p = await placeDetails(row.place_id);
+        biz = shapeBusiness(p);
+      } catch (e) {
+        console.warn("refresh from Google failed, using stored data:", e.message);
+      }
+    }
+    if (!biz) {
+      biz = {
+        place_id:     row.place_id,
+        name:         row.name,
+        address:      row.address || "",
+        phone:        row.phone || "",
+        category:     row.category || "Local Business",
+        rating:       parseFloat(row.rating) || 0,
+        review_count: row.review_count || 0,
+        hours:        row.hours_json || [],
+        website:      row.website || "",
+        photos:       row.photos_json || [],
+        reviews:      row.reviews_json || [],
+        description:  row.description || "",
+      };
+    }
+
+    const { saved, slug } = await buildAndSaveSite(biz, row.area_searched || "");
+    res.json({ business: saved, slug, previewUrl: `/preview/${slug}` });
+  } catch (e) {
+    console.error("🔴 rebuild:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// CRUD
+app.get("/api/businesses", async (req, res) => {
+  try {
+    const { status } = req.query;
+    let sql = "SELECT * FROM businesses"; const p = [];
+    if (status && status !== "all") { sql += " WHERE status=$1"; p.push(status); }
+    sql += " ORDER BY created_at DESC";
+    const r = await pool.query(sql, p);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/businesses/:id", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: "not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put("/api/businesses/:id", async (req, res) => {
-  const { id } = req.params;
-  const b = req.body;
-  const allowed = ["name","address","phone","category","rating","review_count","hours","website","google_url","status","notes","preview_slug"];
-  const sets = []; const params = [];
-  for (const col of allowed) {
-    if (col in b) { sets.push(`${col}=$${params.length+1}`); params.push(b[col]); }
-  }
-  if (!sets.length) return res.json({ ok: true });
-  sets.push(`updated_at=NOW()`);
-  params.push(id);
-  await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${params.length}`, params);
-  const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-  res.json(r.rows[0]);
+  try {
+    const allowed = ["status", "notes", "name", "phone", "address", "category"];
+    const sets = [], vals = [];
+    for (const k of allowed) {
+      if (k in req.body) { sets.push(`${k}=$${vals.length + 1}`); vals.push(req.body[k]); }
+    }
+    if (!sets.length) {
+      const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [req.params.id]);
+      return res.json(r.rows[0]);
+    }
+    sets.push("updated_at=NOW()"); vals.push(req.params.id);
+    await pool.query(`UPDATE businesses SET ${sets.join(",")} WHERE id=$${vals.length}`, vals);
+    const r = await pool.query("SELECT * FROM businesses WHERE id=$1", [req.params.id]);
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete("/api/businesses/:id", async (req, res) => {
-  await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
-  res.json({ deleted: true });
-});
-
-app.post("/api/search", async (req, res) => {
-  const { area } = req.body;
-  if (!area) return res.status(400).json({ error: "area required" });
-
-  const localMockData = [
-    { id: 1001, name: `${area} Auto Glass Repair`, address: `${area}, Main St`, phone: "555-0192", category: "Auto Repair", rating: 4.7, review_count: 124, hours: "Mon-Sat 8AM-6PM", area_searched: area },
-    { id: 1002, name: "The Local Grill & Bistro", address: `${area}, Pizza Boulevard`, phone: "555-0234", category: "Restaurant", rating: 4.5, review_count: 88, hours: "Everyday 11AM-10PM", area_searched: area },
-    { id: 1003, name: "Elegance Hair & Nail Salon", address: `${area}, Beauty Lane`, phone: "555-0781", category: "Salon", rating: 4.9, review_count: 210, hours: "Tue-Sun 9AM-7PM", area_searched: area },
-    { id: 1004, name: "Apex Commercial Cleaning", address: `${area}, Business District`, phone: "555-0432", category: "Cleaning Service", rating: 4.2, review_count: 35, hours: "Mon-Fri 7AM-8PM", area_searched: area },
-    { id: 1005, name: "Green Thumb Landscaping", address: `${area}, Garden Way`, phone: "555-0901", category: "Landscaping", rating: 4.6, review_count: 54, hours: "Mon-Fri 7AM-5PM", area_searched: area }
-  ];
-  res.json(localMockData);
-});
-
-const generateHandler = async (req, res) => {
   try {
-    const { id } = req.params;
-    let biz = await pool.query("SELECT * FROM businesses WHERE id=$1", [id]);
-    
-    if (!biz.rows.length) {
-      const b = req.body;
-      const insertResult = await pool.query(
-        `INSERT INTO businesses (name, address, phone, category, rating, review_count, hours, status, area_searched)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-        [b.name || "Business", b.address || "", b.phone || "", b.category || "", b.rating || 5, b.review_count || 50, b.hours || "", "prospect", b.area_searched || ""]
-      );
-      biz = insertResult;
-    }
+    await pool.query("DELETE FROM businesses WHERE id=$1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-    const currentBiz = biz.rows[0];
-    const html = await generatePremiumHTML(currentBiz);
-    const slug = `${currentBiz.id}-${Date.now()}`;
-
-    await pool.query(
-      `INSERT INTO generated_sites (business_id, slug, html)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (slug) DO UPDATE SET html=EXCLUDED.html`,
-      [currentBiz.id, slug, html]
-    );
-
-    await pool.query("UPDATE businesses SET preview_slug=$1 WHERE id=$2", [slug, currentBiz.id]);
-    res.json({ url: `/preview/${slug}`, slug });
-  } catch (err) {
-    console.error("🔴 Generation Route Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-app.post("/api/generate/:id", generateHandler);
-app.post("/generate/:id", generateHandler);
-
+// PREVIEW — serve the AI-generated HTML
 app.get("/preview/:slug", async (req, res) => {
   try {
     const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
-    if (!r.rows.length) return res.status(404).send("Site not found");
+    if (!r.rows.length) return res.status(404).send("<h1>Site not found</h1>");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(r.rows[0].html);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
+  } catch (e) { res.status(500).send(e.message); }
 });
 
 const PORT = process.env.PORT || 3001;
-initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 SiteSprint Claude Sonnet Engine active on port ${PORT}`));
-});
+initDB()
+  .then(() => app.listen(PORT, () => console.log(`🚀 SiteSprint v9 on :${PORT} — Google:${GKEY?"✅":"❌"} Anthropic:${process.env.ANTHROPIC_KEY?"✅":"❌"}`)))
+  .catch(err => { console.error("startup failed:", err); process.exit(1); });
