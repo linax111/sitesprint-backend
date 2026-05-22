@@ -235,34 +235,108 @@ async function urlToPlaceId(url) {
   throw new Error("Couldn't extract a place from this URL. Use the Discover tab and search the business by name instead.");
 }
 
-// ─── PHOTO PROXY (keeps API key server-side) ──────────────────────────────────
+// 1×1 transparent PNG — sent when Google fails so the browser never shows a broken icon
+const TRANSPARENT_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64"
+);
+function sendTransparentPNG(res) {
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(TRANSPARENT_PNG);
+}
+
+// ─── PHOTO PROXY (keeps API key server-side; never returns a broken-icon response) ───
 app.get("/photo", async (req, res) => {
   try {
     const { ref, w = 1600 } = req.query;
-    if (!ref)  return res.status(400).send("ref required");
-    if (!GKEY) return res.status(500).send("Google API key not set");
+    if (!ref || !GKEY) return sendTransparentPNG(res);
     const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${w}&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
     const r = await fetch(url, { redirect: "follow" });
-    if (!r.ok) return res.status(r.status).send("photo fetch failed");
+    if (!r.ok) {
+      console.warn(`📷 photo ${ref.slice(0, 20)}... → Google HTTP ${r.status}`);
+      return sendTransparentPNG(res);
+    }
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.startsWith("image/")) {
+      console.warn(`📷 photo ${ref.slice(0, 20)}... → non-image content-type: ${ct}`);
+      return sendTransparentPNG(res);
+    }
     const buf = Buffer.from(await r.arrayBuffer());
-    res.setHeader("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.setHeader("Content-Type", ct || "image/jpeg");
     res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
     res.send(buf);
   } catch (e) {
-    res.status(500).send(e.message);
+    console.warn("📷 photo proxy error:", e.message);
+    sendTransparentPNG(res);
   }
 });
 
+// Validate a proxy URL like "/photo?ref=X&w=1600" by quickly hitting Google directly
+async function isPhotoUrlValid(proxyUrl) {
+  const m = proxyUrl.match(/[?&]ref=([^&]+)/);
+  if (!m) return false;
+  const ref = decodeURIComponent(m[1]);
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=200&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
+    const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(5000) });
+    return r.ok && (r.headers.get("content-type") || "").startsWith("image/");
+  } catch {
+    return false;
+  }
+}
+
+// Validate all photo URLs in parallel; return only the ones Google actually serves
+async function filterValidPhotos(photoUrls) {
+  if (!photoUrls?.length) return [];
+  const checks = await Promise.all(photoUrls.map(async u => ({ url: u, ok: await isPhotoUrlValid(u) })));
+  const valid = checks.filter(c => c.ok).map(c => c.url);
+  console.log(`📸 photo validation: ${valid.length}/${photoUrls.length} valid`);
+  return valid;
+}
+
+// Post-processing safety net: replace any /photo?ref=X URL not in our valid list
+// with a cycled valid one (covers any URLs Claude invented or that became invalid later)
+function bulletproofImages(html, validPhotos) {
+  if (!validPhotos?.length) return html;
+  const validSet = new Set(validPhotos);
+  let i = 0;
+  const cycle = () => validPhotos[i++ % validPhotos.length];
+  let swapped = 0;
+
+  // <img src="...">
+  html = html.replace(/<img\b([^>]*?)\bsrc=(["'])([^"']+)\2/gi, (m, attrs, q, url) => {
+    if (url.includes("/photo?ref=") && !validSet.has(url)) {
+      swapped++;
+      return `<img${attrs}src=${q}${cycle()}${q}`;
+    }
+    return m;
+  });
+  // CSS url('...') in inline styles or <style> blocks
+  html = html.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, url) => {
+    if (url.includes("/photo?ref=") && !validSet.has(url)) {
+      swapped++;
+      return `url('${cycle()}')`;
+    }
+    return m;
+  });
+  if (swapped) console.log(`🛡️  bulletproofImages: swapped ${swapped} invalid image references`);
+  return html;
+}
+
 // ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
 async function generateUniqueHTML(biz) {
-  const photos  = (biz.photos || []).slice(0, 8);
-  const reviews = (biz.reviews || []).slice(0, 5);
+  // Validate photos first — only feed Claude URLs that Google actually serves
+  const validPhotos = await filterValidPhotos(biz.photos || []);
+  const photos  = validPhotos.slice(0, 10);
+  // Only 5-star reviews (per user requirement)
+  const reviews = (biz.reviews || []).filter(r => Number(r.rating) === 5).slice(0, 5);
 
   const reviewsBlock = reviews.length
     ? reviews.map((r, i) =>
         `R${i+1}: ${r.name} (${r.rating}★, ${r.time}): "${(r.text || "").slice(0, 280)}"`
       ).join("\n")
-    : "(no Google reviews available)";
+    : "(no 5-star Google reviews available — omit the testimonials section gracefully)";
 
   const photosBlock = photos.length
     ? photos.map((u, i) => `IMG${i+1}: ${u}`).join("\n")
@@ -283,7 +357,7 @@ Rating: ${biz.rating}★ from ${biz.review_count} Google reviews
 Hours: ${hoursBlock}
 Description: ${biz.description || "(none)"}
 
-═══ REAL GOOGLE REVIEWS (use VERBATIM — these are real customers) ═══
+═══ REAL GOOGLE 5-STAR REVIEWS (use VERBATIM — these are real customers) ═══
 ${reviewsBlock}
 
 ═══ AVAILABLE PHOTOS (real Google Place photos — embed via these URLs) ═══
@@ -466,6 +540,11 @@ Give this site real ambition — typical output for a wow-factor flagship is 25,
     if (!lc.includes("</body>")) html += "\n</body>";
     html += "\n</html>";
   }
+
+  // Safety net: replace any /photo?ref=X URL that isn't in our validated set
+  // (covers cases where Claude reuses a ref imprecisely or a photo later 403s)
+  html = bulletproofImages(html, validPhotos);
+
   console.log(`✅ ${biz.name}: HTML done — ${html.length} chars, ${attempts} call(s)`);
   return html;
 }
