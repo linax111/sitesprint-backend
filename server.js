@@ -68,6 +68,15 @@ async function initDB() {
     html TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );`);
+
+  // Photo cache — every Google photo is downloaded once and served from DB forever
+  // after. Eliminates repeat Google API calls and decouples uptime from Google quota.
+  await pool.query(`CREATE TABLE IF NOT EXISTS photo_cache (
+    ref TEXT PRIMARY KEY,
+    content_type TEXT DEFAULT 'image/jpeg',
+    bytes BYTEA NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );`);
   console.log("✅ DB ready");
 }
 
@@ -242,56 +251,99 @@ const TRANSPARENT_PNG = Buffer.from(
 );
 function sendTransparentPNG(res) {
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "public, max-age=60"); // short TTL so it auto-retries
   return res.send(TRANSPARENT_PNG);
 }
 
-// ─── PHOTO PROXY (keeps API key server-side; never returns a broken-icon response) ───
+// Fetch+cache a single photo. Returns { ok, contentType, bytes } or null on failure.
+async function fetchAndCachePhoto(ref, width = 1600) {
+  if (!ref || !GKEY) return null;
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${width}&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
+    const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+    if (!r.ok) {
+      console.warn(`📷 ${ref.slice(0, 20)}... → Google HTTP ${r.status}`);
+      return null;
+    }
+    const ct = r.headers.get("content-type") || "image/jpeg";
+    if (!ct.startsWith("image/")) {
+      console.warn(`📷 ${ref.slice(0, 20)}... → non-image content-type: ${ct}`);
+      return null;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    // Persist to DB cache (upsert)
+    try {
+      await pool.query(
+        `INSERT INTO photo_cache (ref, content_type, bytes) VALUES ($1, $2, $3)
+         ON CONFLICT (ref) DO UPDATE SET bytes=EXCLUDED.bytes, content_type=EXCLUDED.content_type, created_at=NOW()`,
+        [ref, ct, buf]
+      );
+    } catch (e) {
+      console.warn("photo cache write failed:", e.message);
+    }
+    return { ok: true, contentType: ct, bytes: buf };
+  } catch (e) {
+    console.warn(`📷 ${ref.slice(0, 20)}... → fetch error: ${e.message}`);
+    return null;
+  }
+}
+
+// ─── PHOTO PROXY (DB-cached; only hits Google on first miss) ──────────────────
 app.get("/photo", async (req, res) => {
   try {
     const { ref, w = 1600 } = req.query;
-    if (!ref || !GKEY) return sendTransparentPNG(res);
-    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${w}&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
-    const r = await fetch(url, { redirect: "follow" });
-    if (!r.ok) {
-      console.warn(`📷 photo ${ref.slice(0, 20)}... → Google HTTP ${r.status}`);
-      return sendTransparentPNG(res);
+    if (!ref) return sendTransparentPNG(res);
+
+    // 1. Try DB cache first — zero Google calls if hit
+    try {
+      const cached = await pool.query(
+        "SELECT content_type, bytes FROM photo_cache WHERE ref=$1",
+        [ref]
+      );
+      if (cached.rows.length) {
+        res.setHeader("Content-Type", cached.rows[0].content_type || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+        return res.send(cached.rows[0].bytes);
+      }
+    } catch (e) {
+      console.warn("photo cache read failed:", e.message);
     }
-    const ct = r.headers.get("content-type") || "";
-    if (!ct.startsWith("image/")) {
-      console.warn(`📷 photo ${ref.slice(0, 20)}... → non-image content-type: ${ct}`);
-      return sendTransparentPNG(res);
-    }
-    const buf = Buffer.from(await r.arrayBuffer());
-    res.setHeader("Content-Type", ct || "image/jpeg");
+
+    // 2. Cache miss — fetch from Google, cache, serve
+    const result = await fetchAndCachePhoto(ref, w);
+    if (!result) return sendTransparentPNG(res);
+    res.setHeader("Content-Type", result.contentType);
     res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-    res.send(buf);
+    res.send(result.bytes);
   } catch (e) {
     console.warn("📷 photo proxy error:", e.message);
     sendTransparentPNG(res);
   }
 });
 
-// Validate a proxy URL like "/photo?ref=X&w=1600" by quickly hitting Google directly
-async function isPhotoUrlValid(proxyUrl) {
-  const m = proxyUrl.match(/[?&]ref=([^&]+)/);
-  if (!m) return false;
-  const ref = decodeURIComponent(m[1]);
-  try {
-    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=200&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`;
-    const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(5000) });
-    return r.ok && (r.headers.get("content-type") || "").startsWith("image/");
-  } catch {
-    return false;
-  }
-}
-
-// Validate all photo URLs in parallel; return only the ones Google actually serves
-async function filterValidPhotos(photoUrls) {
+// Pre-warm cache at build time. Downloads each photo once and caches it.
+// Returns the proxy URLs of photos that successfully cached.
+async function prefetchPhotos(photoUrls) {
   if (!photoUrls?.length) return [];
-  const checks = await Promise.all(photoUrls.map(async u => ({ url: u, ok: await isPhotoUrlValid(u) })));
-  const valid = checks.filter(c => c.ok).map(c => c.url);
-  console.log(`📸 photo validation: ${valid.length}/${photoUrls.length} valid`);
+
+  const tasks = photoUrls.map(async (proxyUrl) => {
+    const m = proxyUrl.match(/[?&]ref=([^&]+)/);
+    if (!m) return { url: proxyUrl, ok: false };
+    const ref = decodeURIComponent(m[1]);
+
+    // Already cached? skip Google entirely.
+    try {
+      const r = await pool.query("SELECT 1 FROM photo_cache WHERE ref=$1 LIMIT 1", [ref]);
+      if (r.rows.length) return { url: proxyUrl, ok: true };
+    } catch {}
+
+    const result = await fetchAndCachePhoto(ref, 1600);
+    return { url: proxyUrl, ok: !!result };
+  });
+
+  const results = await Promise.all(tasks);
+  const valid = results.filter(r => r.ok).map(r => r.url);
+  console.log(`📸 prefetch: ${valid.length}/${photoUrls.length} photos cached`);
   return valid;
 }
 
@@ -326,8 +378,10 @@ function bulletproofImages(html, validPhotos) {
 
 // ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
 async function generateUniqueHTML(biz) {
-  // Validate photos first — only feed Claude URLs that Google actually serves
-  const validPhotos = await filterValidPhotos(biz.photos || []);
+  // Pre-download all photos to DB cache. This:
+  //  - Eliminates Google API calls at view time (served from DB)
+  //  - Ensures we only feed Claude URLs that we KNOW will work
+  const validPhotos = await prefetchPhotos(biz.photos || []);
   const photos  = validPhotos.slice(0, 10);
   // Only 5-star reviews (per user requirement)
   const reviews = (biz.reviews || []).filter(r => Number(r.rating) === 5).slice(0, 5);
@@ -827,6 +881,35 @@ app.get("/api/businesses", async (req, res) => {
     sql += " ORDER BY created_at DESC";
     const r = await pool.query(sql, p);
     res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Warm photo cache for ALL existing businesses (one-time recovery for old sites)
+// POST /api/warm-cache
+app.post("/api/warm-cache", async (req, res) => {
+  try {
+    const all = await pool.query("SELECT id, name, photos_json FROM businesses WHERE photos_json IS NOT NULL");
+    let totalPhotos = 0, cached = 0;
+    for (const row of all.rows) {
+      const photos = row.photos_json || [];
+      if (!photos.length) continue;
+      totalPhotos += photos.length;
+      const valid = await prefetchPhotos(photos);
+      cached += valid.length;
+      console.log(`🔥 warmed ${valid.length}/${photos.length} for ${row.name}`);
+    }
+    res.json({ businesses: all.rows.length, totalPhotos, cached });
+  } catch (e) {
+    console.error("warm-cache:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cache status check
+app.get("/api/cache-status", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT COUNT(*)::int AS cnt, SUM(LENGTH(bytes))::bigint AS total_bytes FROM photo_cache");
+    res.json({ cached_photos: r.rows[0].cnt, total_bytes: r.rows[0].total_bytes });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
