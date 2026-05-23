@@ -77,6 +77,15 @@ async function initDB() {
     bytes BYTEA NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );`);
+
+  // Place Details cache — caches the full Google Places result per place_id.
+  // Hugely reduces cost: searching the same area twice = nearly free.
+  await pool.query(`CREATE TABLE IF NOT EXISTS place_details_cache (
+    place_id TEXT PRIMARY KEY,
+    details_json JSONB NOT NULL,
+    is_full BOOLEAN DEFAULT false,   -- true = full atmosphere data; false = basic+contact only
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );`);
   console.log("✅ DB ready");
 }
 
@@ -118,12 +127,57 @@ async function placesTextSearchMultiPage(query, maxPages = 3) {
   return all;
 }
 
-async function placeDetails(placeId) {
-  const fields = "place_id,name,formatted_address,formatted_phone_number,international_phone_number,rating,user_ratings_total,opening_hours,website,types,reviews,editorial_summary,business_status,geometry,photos,url";
+// FULL Place Details — used at BUILD time. Includes Atmosphere SKU (reviews, rating).
+// Cost: $0.062 per call (Basic + Contact + Atmosphere)
+const DETAILS_FIELDS_FULL = "place_id,name,formatted_address,formatted_phone_number,international_phone_number,rating,user_ratings_total,opening_hours,website,types,reviews,editorial_summary,business_status,geometry,photos,url";
+// BASIC Place Details — used during DISCOVER to filter by website only. Skips Atmosphere SKU.
+// Cost: $0.037 per call (Basic + Contact only). ~40% cheaper than full.
+const DETAILS_FIELDS_BASIC = "place_id,name,formatted_address,formatted_phone_number,website,business_status,types,photos,opening_hours,geometry,url";
+
+async function placeDetails(placeId, { full = true, useCache = true } = {}) {
+  // Try cache first when allowed (and the cached entry meets our 'full' requirement)
+  if (useCache) {
+    try {
+      const r = await pool.query(
+        "SELECT details_json, is_full FROM place_details_cache WHERE place_id=$1",
+        [placeId]
+      );
+      if (r.rows.length) {
+        const row = r.rows[0];
+        // Cached entry satisfies our request if: we asked for basic, OR cached is full
+        if (!full || row.is_full) {
+          return row.details_json;
+        }
+      }
+    } catch (e) {
+      console.warn("details cache read failed:", e.message);
+    }
+  }
+
+  // Cache miss — fetch from Google
+  const fields = full ? DETAILS_FIELDS_FULL : DETAILS_FIELDS_BASIC;
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&key=${GKEY}&language=en&reviews_no_translations=true`;
   const d = await gfetch(url);
   if (d.status !== "OK") throw new Error(`Details ${d.status}: ${d.error_message || ""}`);
-  return d.result;
+  const result = d.result;
+
+  // Persist to cache (upsert; full data wins over basic if it exists)
+  try {
+    await pool.query(
+      `INSERT INTO place_details_cache (place_id, details_json, is_full)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (place_id) DO UPDATE SET
+         details_json = CASE WHEN EXCLUDED.is_full OR NOT place_details_cache.is_full
+                              THEN EXCLUDED.details_json ELSE place_details_cache.details_json END,
+         is_full = place_details_cache.is_full OR EXCLUDED.is_full,
+         created_at = NOW()`,
+      [placeId, result, full]
+    );
+  } catch (e) {
+    console.warn("details cache write failed:", e.message);
+  }
+
+  return result;
 }
 
 function mapCategory(types = [], name = "") {
@@ -673,53 +727,52 @@ app.get("/", (_, res) => res.json({
 
 // DISCOVER — real Google search filtered to businesses WITHOUT a website
 //
-// Strategy:
-//  - If user picked a category: paginate that one query (up to 60 results)
-//  - If broad search: run 55+ small-business queries in parallel — categories
-//    far more likely to lack a website (barber, nails, taqueria, food truck,
-//    tailor, handyman, locksmith, etc.) than "restaurants in X" which mostly
-//    surfaces big chains that already have sites
-//  - Fetch details with concurrency 10, stop once we have `limit` no-website hits
+// Cost-optimized:
+//  - Default: 15 small-biz categories (was 55, ~3x cheaper)
+//  - User can specify a category for focused deep-paginated search
+//  - Filter pass uses placeDetails with full=false (Basic+Contact SKU = $0.037)
+//    instead of full Atmosphere SKU ($0.062) — ~40% cheaper per place check
+//  - Place Details are cached in DB, so re-searching the same area is nearly free
 app.post("/api/discover", async (req, res) => {
   try {
-    const { area, category = "", limit = 50 } = req.body;
+    const { area, category = "", limit = 50, deep = false } = req.body;
     if (!area)  return res.status(400).json({ error: "area required" });
     if (!GKEY)  return res.status(500).json({ error: "GOOGLE_API_KEY not configured" });
 
-    // 55 small-biz categories with high "no website" rate, grouped by intent
-    const SMALL_BIZ = [
-      // Personal care & beauty
-      "barber shops", "nail salons", "hair salons", "beauty salons",
-      "tattoo shops", "piercing studios", "lash studios", "brow studios",
-      "tailors", "dry cleaners", "shoe repair", "massage therapists",
-      // Auto
-      "auto repair", "tire shops", "car detailing", "car wash",
-      "auto body shops", "oil change shops", "mobile mechanics", "auto glass repair",
-      // Food
-      "taquerias", "food trucks", "donut shops", "ice cream shops",
-      "small family restaurants", "bakeries", "sandwich shops", "pizzerias",
-      "bbq joints", "juice bars", "smoothie shops", "boba tea shops",
-      "halal restaurants", "vietnamese restaurants", "ethiopian restaurants",
-      // Home & services
-      "handymen", "locksmiths", "lawn care", "plumbers",
-      "electricians", "cleaning services", "pet groomers", "junk removal",
-      "moving companies", "painters", "fence contractors", "hvac repair",
-      // Retail
-      "convenience stores", "ethnic markets", "florists", "smoke shops",
-      "thrift stores", "consignment shops",
-      // Professional
-      "tax preparers", "notaries", "tutors", "music lessons",
-      "dance studios", "martial arts dojos", "photographers",
+    // Default 15 categories — high "no website" hit-rate with reasonable cost.
+    // Set deep=true to use the full 55-category scan (~3x more expensive).
+    const SMALL_BIZ_DEFAULT = [
+      "barber shops", "nail salons", "tattoo shops", "tailors",
+      "auto repair", "tire shops", "car detailing",
+      "taquerias", "food trucks", "small family restaurants",
+      "handymen", "locksmiths", "lawn care",
+      "florists", "ethnic markets",
     ];
+    const SMALL_BIZ_DEEP = [
+      ...SMALL_BIZ_DEFAULT,
+      // Extra coverage for deep scan
+      "hair salons", "beauty salons", "piercing studios", "lash studios",
+      "brow studios", "massage therapists", "dry cleaners", "shoe repair",
+      "car wash", "auto body shops", "oil change shops", "mobile mechanics",
+      "auto glass repair", "donut shops", "ice cream shops", "bakeries",
+      "sandwich shops", "pizzerias", "bbq joints", "juice bars",
+      "smoothie shops", "boba tea shops", "halal restaurants",
+      "vietnamese restaurants", "ethiopian restaurants",
+      "plumbers", "electricians", "cleaning services", "pet groomers",
+      "junk removal", "moving companies", "painters", "fence contractors",
+      "hvac repair", "convenience stores", "smoke shops", "thrift stores",
+      "consignment shops", "tax preparers", "notaries", "tutors",
+      "music lessons", "dance studios", "martial arts dojos", "photographers",
+    ];
+    const SMALL_BIZ = deep ? SMALL_BIZ_DEEP : SMALL_BIZ_DEFAULT;
 
-    // Build query plan
     let queries, paginate;
     if (category) {
       queries  = [`${category} in ${area}`];
-      paginate = true;   // one focused query → fetch all 60 results
+      paginate = true;
     } else {
       queries  = SMALL_BIZ.map(q => `${q} in ${area}`);
-      paginate = false;  // many queries → just first 20 each is plenty
+      paginate = false;
     }
 
     // Run all searches in parallel
@@ -735,21 +788,21 @@ app.post("/api/discover", async (req, res) => {
     });
     const allResults = (await Promise.all(searchPromises)).flat();
 
-    // Dedupe by place_id
-    const seen = new Set();
-    const candidates = [];
+    // Dedupe by place_id (and merge Text Search metadata: rating, review_count, photos)
+    const seen = new Map();
     for (const r of allResults) {
       if (r.place_id && !seen.has(r.place_id)) {
-        seen.add(r.place_id);
-        candidates.push(r);
+        seen.set(r.place_id, r);
       }
     }
+    const candidates = [...seen.values()];
     console.log(`🔍 ${area} — ${queries.length} queries → ${candidates.length} unique candidates`);
 
-    // Fetch details with concurrency; stop once we have `limit` no-website hits
+    // Filter pass: fetch BASIC details (cheaper) just to check website + business_status
     const withoutWebsite = [];
     let idx = 0;
     let detailsChecked = 0;
+    let detailsFromCache = 0;
     const CONCURRENCY = 12;
 
     const worker = async () => {
@@ -757,9 +810,27 @@ app.post("/api/discover", async (req, res) => {
         const my = idx++;
         const c  = candidates[my];
         try {
-          const p = await placeDetails(c.place_id);
-          detailsChecked++;
+          // Quick cache check first (avoid Google call entirely if we have any cached entry)
+          let p;
+          let fromCache = false;
+          try {
+            const cr = await pool.query("SELECT details_json FROM place_details_cache WHERE place_id=$1", [c.place_id]);
+            if (cr.rows.length) {
+              p = cr.rows[0].details_json;
+              fromCache = true;
+              detailsFromCache++;
+            }
+          } catch {}
+
+          if (!p) {
+            p = await placeDetails(c.place_id, { full: false });
+            detailsChecked++;
+          }
+
           if (!p.website && p.business_status !== "CLOSED_PERMANENTLY") {
+            // Merge text-search rating into the shaped result (since basic SKU doesn't include rating)
+            if (!p.rating && c.rating) p.rating = c.rating;
+            if (!p.user_ratings_total && c.user_ratings_total) p.user_ratings_total = c.user_ratings_total;
             withoutWebsite.push(shapeBusiness(p));
           }
         } catch (e) {
@@ -769,15 +840,20 @@ app.post("/api/discover", async (req, res) => {
     };
     await Promise.all(Array(CONCURRENCY).fill(0).map(() => worker()));
 
-    console.log(`✅ ${area}: checked ${detailsChecked}/${candidates.length}, found ${withoutWebsite.length} without website`);
+    // Rough cost estimate (USD) — Text Search $0.032, Details Basic+Contact $0.037
+    const estCostUSD = (queries.length * 0.032 + detailsChecked * 0.037).toFixed(2);
+
+    console.log(`✅ ${area}: checked ${detailsChecked} (cache hits: ${detailsFromCache}), found ${withoutWebsite.length} without website. Est cost: $${estCostUSD}`);
 
     res.json({
       area,
-      category: category || `small-biz mix (${SMALL_BIZ.length} categories)`,
+      category: category || (deep ? `deep scan (${SMALL_BIZ.length} categories)` : `default scan (${SMALL_BIZ.length} categories)`),
       queries_used: queries.length,
       scanned: candidates.length,
       details_checked: detailsChecked,
+      details_from_cache: detailsFromCache,
       count: withoutWebsite.length,
+      estimated_cost_usd: estCostUSD,
       businesses: withoutWebsite,
     });
   } catch (e) {
@@ -885,20 +961,35 @@ app.get("/api/businesses", async (req, res) => {
 });
 
 // Warm photo cache for ALL existing businesses (one-time recovery for old sites)
-// POST /api/warm-cache
-app.post("/api/warm-cache", async (req, res) => {
+// Visit in browser: GET /api/warm-cache  — or POST from a client
+app.all("/api/warm-cache", async (req, res) => {
   try {
     const all = await pool.query("SELECT id, name, photos_json FROM businesses WHERE photos_json IS NOT NULL");
-    let totalPhotos = 0, cached = 0;
+    let totalPhotos = 0, cached = 0, failed = 0;
+    const failures = [];
     for (const row of all.rows) {
       const photos = row.photos_json || [];
       if (!photos.length) continue;
       totalPhotos += photos.length;
       const valid = await prefetchPhotos(photos);
       cached += valid.length;
+      if (valid.length < photos.length) {
+        failed += photos.length - valid.length;
+        failures.push({ business: row.name, photos: photos.length, cached: valid.length });
+      }
       console.log(`🔥 warmed ${valid.length}/${photos.length} for ${row.name}`);
     }
-    res.json({ businesses: all.rows.length, totalPhotos, cached });
+    res.json({
+      ok: true,
+      businesses_processed: all.rows.length,
+      total_photos: totalPhotos,
+      cached_successfully: cached,
+      failed,
+      failures: failures.slice(0, 20),
+      hint: failed > 0
+        ? "Some photos failed to cache. Check /api/diagnose to see why. Most likely cause: Google API quota."
+        : "All photos cached successfully. Existing sites should work now (force-refresh your browser).",
+    });
   } catch (e) {
     console.error("warm-cache:", e);
     res.status(500).json({ error: e.message });
@@ -908,9 +999,100 @@ app.post("/api/warm-cache", async (req, res) => {
 // Cache status check
 app.get("/api/cache-status", async (req, res) => {
   try {
-    const r = await pool.query("SELECT COUNT(*)::int AS cnt, SUM(LENGTH(bytes))::bigint AS total_bytes FROM photo_cache");
-    res.json({ cached_photos: r.rows[0].cnt, total_bytes: r.rows[0].total_bytes });
+    const r = await pool.query("SELECT COUNT(*)::int AS cnt, COALESCE(SUM(LENGTH(bytes)), 0)::bigint AS total_bytes FROM photo_cache");
+    res.json({
+      cached_photos: r.rows[0].cnt,
+      total_bytes: Number(r.rows[0].total_bytes),
+      total_mb: Math.round(Number(r.rows[0].total_bytes) / 1024 / 1024 * 100) / 100,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Diagnose Google API connectivity — tests if photos are actually fetchable
+app.get("/api/diagnose", async (req, res) => {
+  const report = {
+    env: {
+      google_api_key_set: !!GKEY,
+      google_api_key_preview: GKEY ? GKEY.slice(0, 8) + "…" + GKEY.slice(-4) : null,
+      anthropic_key_set: !!process.env.ANTHROPIC_KEY,
+      database_url_set: !!process.env.DATABASE_URL,
+      node_env: process.env.NODE_ENV || "development",
+    },
+    tests: {},
+  };
+
+  // Test 1: A simple Text Search (cheap, tells us if API key works at all)
+  try {
+    const r = await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=coffee+in+manhattan&key=${GKEY}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    const j = await r.json();
+    report.tests.text_search = {
+      http: r.status,
+      api_status: j.status,
+      error_message: j.error_message || null,
+      results_returned: j.results?.length || 0,
+    };
+  } catch (e) {
+    report.tests.text_search = { error: e.message };
+  }
+
+  // Test 2: Photo API — pick a random ref from our DB and try fetching
+  try {
+    const pr = await pool.query(
+      "SELECT photos_json, name FROM businesses WHERE photos_json IS NOT NULL AND jsonb_array_length(photos_json) > 0 LIMIT 1"
+    );
+    if (pr.rows.length) {
+      const photoUrl = pr.rows[0].photos_json[0];
+      const m = photoUrl.match(/[?&]ref=([^&]+)/);
+      if (m) {
+        const ref = decodeURIComponent(m[1]);
+        const r = await fetch(
+          `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${encodeURIComponent(ref)}&key=${GKEY}`,
+          { redirect: "follow", signal: AbortSignal.timeout(8000) }
+        );
+        report.tests.photo_fetch = {
+          tested_with_business: pr.rows[0].name,
+          http: r.status,
+          content_type: r.headers.get("content-type"),
+          content_length: r.headers.get("content-length"),
+          final_url: r.url.slice(0, 100) + "…",
+          ok: r.ok && (r.headers.get("content-type") || "").startsWith("image/"),
+        };
+      } else {
+        report.tests.photo_fetch = { error: "No valid ref found in DB photo URL" };
+      }
+    } else {
+      report.tests.photo_fetch = { skipped: "No businesses with photos in DB" };
+    }
+  } catch (e) {
+    report.tests.photo_fetch = { error: e.message };
+  }
+
+  // Test 3: Cache stats
+  try {
+    const cs = await pool.query("SELECT COUNT(*)::int AS cnt FROM photo_cache");
+    report.tests.cache = { cached_photo_count: cs.rows[0].cnt };
+  } catch (e) {
+    report.tests.cache = { error: e.message };
+  }
+
+  // Interpret
+  const t = report.tests;
+  if (t.photo_fetch?.http === 403 || t.text_search?.api_status === "OVER_QUERY_LIMIT") {
+    report.diagnosis = "❌ Google API QUOTA EXCEEDED or key restrictions block server requests. Check Google Cloud Console → APIs → Places API → Quotas. Also verify the key has no HTTP referrer restriction (server keys should accept any referrer / be unrestricted, or restricted to your server IP).";
+  } else if (t.text_search?.api_status === "REQUEST_DENIED") {
+    report.diagnosis = "❌ API key invalid or Places API not enabled. Enable Places API (Legacy) in Google Cloud Console.";
+  } else if (t.photo_fetch?.ok) {
+    report.diagnosis = "✅ Google Photos API is working. If images still don't show, try POST /api/warm-cache then force-refresh the page.";
+  } else if (t.text_search?.api_status === "OK" && t.photo_fetch && !t.photo_fetch.ok) {
+    report.diagnosis = "⚠️ Text Search works but Photo fetch fails. Likely: Place Photos API not enabled, or photo-specific quota limit reached.";
+  } else {
+    report.diagnosis = "⚠️ Indeterminate. Inspect raw test results above.";
+  }
+
+  res.json(report);
 });
 
 app.get("/api/businesses/:id", async (req, res) => {
