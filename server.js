@@ -448,6 +448,143 @@ function bulletproofImages(html, validPhotos) {
   return html;
 }
 
+// ─── DESIGN SYSTEMS ───────────────────────────────────────────────────────────
+// 15 distinct, professionally-chosen palettes + font pairings.
+// Each site deterministically gets one based on its place_id (hash → index),
+// so two different businesses NEVER get the same look, but rebuilding the same
+// business gives the same family (consistent brand identity).
+const DESIGN_SYSTEMS = [
+  {
+    id: "editorial-mono",
+    name: "Editorial Black & White",
+    mood: "High-end fashion magazine. Lots of whitespace. Monochrome with one bold accent. Drop caps, pull quotes, asymmetric grids.",
+    palette: { bg: "#FAFAF7", surface: "#FFFFFF", ink: "#0A0A0A", muted: "#71717A", border: "#E4E4E7", accent: "#DC2626" },
+    fonts: { display: "Fraunces", body: "Inter" },
+    flavor: "Use Fraunces in italic for display headlines (clamp 4-9rem). Inter 400/500 for body. Single red accent reserved for emphasis only.",
+  },
+  {
+    id: "sage-botanical",
+    name: "Soft Sage Botanical",
+    mood: "Organic, calm, premium plant-inspired. Curved shapes, soft edges, generous breathing room.",
+    palette: { bg: "#F5F3EE", surface: "#FFFFFF", ink: "#1F2421", muted: "#5B6359", border: "#D9D5CB", accent: "#5A7C5A" },
+    fonts: { display: "Cormorant Garamond", body: "Manrope" },
+    flavor: "Cormorant in light/300 for elegant display. Manrope for clean body. Organic SVG blob shapes as decorative elements. Botanical feel without literal plants.",
+  },
+  {
+    id: "coastal-teal",
+    name: "Coastal Modern Teal",
+    mood: "Refined, ocean-inspired, sophisticated. Like a high-end resort brand. Sand and water tones.",
+    palette: { bg: "#F4F1EC", surface: "#FAF8F5", ink: "#1A2F38", muted: "#4A6470", border: "#D5CFC4", accent: "#2C7A8C" },
+    fonts: { display: "DM Serif Display", body: "DM Sans" },
+    flavor: "DM Serif Display large and tight. DM Sans for everything else. Subtle wave-shaped clip-paths or section dividers.",
+  },
+  {
+    id: "sunset-coral",
+    name: "Sunset Coral",
+    mood: "Warm but VIBRANT, not brown. Sunset orange-pink-coral palette. Hand-crafted, energetic, joyful.",
+    palette: { bg: "#FFF8F4", surface: "#FFFFFF", ink: "#2D1B14", muted: "#8B6F5C", border: "#F5E6DB", accent: "#EE6C4D" },
+    fonts: { display: "Playfair Display", body: "Lato" },
+    flavor: "Playfair italic for romantic display. Lato for body. Gradient accents using #EE6C4D → #F4A261. Curved underlines and circle motifs.",
+  },
+  {
+    id: "industrial-yellow",
+    name: "Industrial Steel + Caution Yellow",
+    mood: "Dark mode. Workshop floor energy. Heavy machinery vibe. Bold, masculine, technical.",
+    palette: { bg: "#0F0F0F", surface: "#1A1A1A", ink: "#F5F5F5", muted: "#A1A1AA", border: "#27272A", accent: "#FACC15" },
+    fonts: { display: "Bebas Neue", body: "Barlow" },
+    flavor: "Bebas Neue MASSIVE and condensed. Barlow for body. Diagonal stripe section dividers. Monospace numbers (JetBrains Mono) for stats.",
+  },
+  {
+    id: "cobalt-tech",
+    name: "Cobalt Modern Tech",
+    mood: "Crisp, intelligent, premium tech brand feel. Like Linear or Vercel design language. Lots of whitespace.",
+    palette: { bg: "#FAFAFA", surface: "#FFFFFF", ink: "#0A0E27", muted: "#4B5563", border: "#E5E7EB", accent: "#1E40AF" },
+    fonts: { display: "Space Grotesk", body: "Inter" },
+    flavor: "Space Grotesk at heavy weights for display. Inter for body. Subtle grid lines. Sharp 4-8px corners (not rounded). Pixel-perfect alignment.",
+  },
+  {
+    id: "oxblood-vintage",
+    name: "Oxblood Vintage Heritage",
+    mood: "Old-school barbershop / heritage brand / Brooklyn craftsman. Established, masculine, classic.",
+    palette: { bg: "#F2EDE5", surface: "#FFFAF0", ink: "#1A1410", muted: "#6B5847", border: "#D9D0BF", accent: "#722F37" },
+    fonts: { display: "Playfair Display", body: "Lato" },
+    flavor: "Playfair bold serif. Lato body. Decorative ornaments (✦ ✧ ◆) as separators. Established-in date as a badge.",
+  },
+  {
+    id: "forest-premium",
+    name: "Deep Forest Premium",
+    mood: "Hushed, expensive, refined. Like a Michelin restaurant or premium spa. Deep greens with cream.",
+    palette: { bg: "#F7F5F0", surface: "#FFFFFF", ink: "#0F1F17", muted: "#5B6359", border: "#DDD8CC", accent: "#1B4332" },
+    fonts: { display: "Cormorant", body: "Inter" },
+    flavor: "Cormorant LIGHT weight, very thin. Inter for body. Heavy negative space. Gold-thin underlines under accents.",
+  },
+  {
+    id: "electric-plum",
+    name: "Electric Plum",
+    mood: "Confident, artistic, slightly avant-garde. Purple as the hero color, not just accent.",
+    palette: { bg: "#FAFAFA", surface: "#FFFFFF", ink: "#1F0033", muted: "#6B5B7A", border: "#E5E0EC", accent: "#7E22CE" },
+    fonts: { display: "Outfit", body: "Lora" },
+    flavor: "Outfit black 900 for huge display. Lora italic for pull quotes. Purple gradient washes on photos using mix-blend-mode.",
+  },
+  {
+    id: "terracotta-mexican",
+    name: "Terracotta + Cobalt Mexican Modern",
+    mood: "Vibrant, sun-soaked, papel picado energy. For taquerias, Latin businesses, anything joyful.",
+    palette: { bg: "#FBF6EE", surface: "#FFFFFF", ink: "#2C1810", muted: "#8B5E3C", border: "#EDDFCA", accent: "#C1452F", accent2: "#1E40AF" },
+    fonts: { display: "Archivo Black", body: "Inter" },
+    flavor: "Archivo Black MASSIVE. Inter body. Use BOTH terracotta AND cobalt as duo-accents. SVG papel-picado / sun motifs. Playful.",
+  },
+  {
+    id: "monochrome-luxe",
+    name: "Monochrome Luxe",
+    mood: "Pure white + pure black. Zero color. Achieves impact through scale, type, and texture only.",
+    palette: { bg: "#FFFFFF", surface: "#FAFAFA", ink: "#000000", muted: "#525252", border: "#E5E5E5", accent: "#000000" },
+    fonts: { display: "Instrument Serif", body: "Inter" },
+    flavor: "Instrument Serif HUGE for display (clamp 5-12rem). Inter for everything else. No colors — use weight, scale, and noise/grain texture for impact.",
+  },
+  {
+    id: "midnight-gold",
+    name: "Midnight + Gold Luxury",
+    mood: "Dark mode luxury. Champagne gold accents. Like a hotel bar or members club brand.",
+    palette: { bg: "#0A0A0A", surface: "#141414", ink: "#FAFAFA", muted: "#A1A1AA", border: "#262626", accent: "#D4AF37" },
+    fonts: { display: "Cormorant", body: "Inter" },
+    flavor: "Cormorant in italic light. Inter for body. Hairline gold borders. Subtle gold-on-black hover states. Whisper-quiet, not loud.",
+  },
+  {
+    id: "blush-boutique",
+    name: "Soft Blush Boutique",
+    mood: "Feminine, boutique-luxe, modern romance. For salons, beauty, florals — but elevated, not cutesy.",
+    palette: { bg: "#FAF5F2", surface: "#FFFFFF", ink: "#2D1B26", muted: "#9B7E8E", border: "#EAD9D9", accent: "#C9748B" },
+    fonts: { display: "Fraunces", body: "Manrope" },
+    flavor: "Fraunces with italic display variant. Manrope body. Soft drop shadows. Rounded image masks (organic blob clip-paths).",
+  },
+  {
+    id: "brutalist-alarm",
+    name: "Brutalist Concrete + Alarm Orange",
+    mood: "Raw, intentional, anti-design. Grid lines visible. Monospace. Striking, NOT corporate.",
+    palette: { bg: "#EDEDED", surface: "#FFFFFF", ink: "#000000", muted: "#525252", border: "#000000", accent: "#FF3300" },
+    fonts: { display: "Space Grotesk", body: "Space Mono" },
+    flavor: "Space Grotesk at black 900 weight. Space Mono for body and numbers. Hard 1px black borders everywhere. Raw, unstyled <hr>. No border-radius anywhere.",
+  },
+  {
+    id: "midcentury-mustard",
+    name: "Mid-century Mustard + Teal",
+    mood: "1950s modernist. Eames-era. Geometric shapes, mustard, teal, cream. Like a vintage travel poster.",
+    palette: { bg: "#F4EFE0", surface: "#FFFAF0", ink: "#1F2A2E", muted: "#5C6B6F", border: "#D8CFB8", accent: "#E0A800", accent2: "#2E797F" },
+    fonts: { display: "Fraunces", body: "Inter" },
+    flavor: "Fraunces wide width. Inter body. Geometric SVG shapes (circles, semicircles, lines) as decoration. Use BOTH mustard AND teal.",
+  },
+];
+
+// Deterministic seeded selector: same place_id always picks the same system,
+// but two different businesses get different systems.
+function pickDesignSystem(seed) {
+  const s = String(seed || Math.random());
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0;
+  return DESIGN_SYSTEMS[Math.abs(hash) % DESIGN_SYSTEMS.length];
+}
+
 // ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
 async function generateUniqueHTML(biz) {
   // Pre-download all photos to DB cache. This:
@@ -470,6 +607,20 @@ async function generateUniqueHTML(biz) {
 
   const hoursBlock = biz.hours?.length ? biz.hours.join(" | ") : "Hours not listed";
 
+  // Deterministically pick a design system based on this business's place_id.
+  // Two different businesses → different design systems → no two sites look alike.
+  const ds = pickDesignSystem(biz.place_id || biz.name);
+  console.log(`🎨 Design system for ${biz.name}: ${ds.name}`);
+
+  const paletteBlock = `
+  --bg:      ${ds.palette.bg};       /* page background */
+  --surface: ${ds.palette.surface};  /* cards / panels */
+  --ink:     ${ds.palette.ink};      /* primary text / headlines */
+  --muted:   ${ds.palette.muted};    /* secondary text */
+  --border:  ${ds.palette.border};   /* hairline dividers */
+  --accent:  ${ds.palette.accent};   /* brand accent — buttons, highlights, key emphasis */${ds.palette.accent2 ? `
+  --accent2: ${ds.palette.accent2};  /* secondary accent — use sparingly for variety */` : ""}`;
+
   const prompt = `You are an elite web designer at a top-tier creative agency. Your sites win Awwwards Site of the Day and FWA awards. A flagship site from your studio costs $15,000+. You are designing a one-off, hand-crafted luxury website for the specific local business below. When the business owner sees this site, they need to IMMEDIATELY want it for their business — it should feel impossible to refuse.
 
 This is NOT a template. NOT a starter. NOT generic. This is a bespoke flagship.
@@ -489,28 +640,49 @@ ${reviewsBlock}
 ═══ AVAILABLE PHOTOS (real Google Place photos — embed via these URLs) ═══
 ${photosBlock}
 
+═══════════════════════════════════════════════════════════════════════════════
+═══ MANDATORY DESIGN SYSTEM — USE EXACTLY (NON-NEGOTIABLE) ═══
+═══════════════════════════════════════════════════════════════════════════════
+Aesthetic: **${ds.name}**
+Mood: ${ds.mood}
+Direction: ${ds.flavor}
+
+🎨 PALETTE — Use these EXACT hex codes as CSS custom properties on :root:
+:root {${paletteBlock}
+}
+Use --accent for ALL primary brand moments (buttons, key links, highlights). The accent IS the brand color — feature it prominently, not just as a footnote. Buttons must use it. Headlines may use it. Make this palette OBVIOUS.
+
+📝 FONTS — Use EXACTLY these two Google Fonts (and nothing else):
+   Display: "${ds.fonts.display}" → for hero, section headlines, large numbers
+   Body:    "${ds.fonts.body}" → everything else (paragraphs, nav, buttons, captions)
+
+Import via @import in <style>:
+   @import url('https://fonts.googleapis.com/css2?family=${ds.fonts.display.replace(/ /g, "+")}:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=${ds.fonts.body.replace(/ /g, "+")}:wght@300;400;500;600;700;800&display=swap');
+
+⛔ DO NOT swap these fonts for "Inter" or any other default. Do not invent additional fonts. The two above are the entire typeface system. Use weight + size + style for variety, not different families.
+
+⛔ DO NOT shift the palette toward brown/amber/beige unless --accent IS brown. Stick to the hex codes above.
+
+═══════════════════════════════════════════════════════════════════════════════
+
 ═══ THE WOW BAR — NON-NEGOTIABLE QUALITY STANDARDS ═══
 
-【1】HERO — visually arresting, pick ONE treatment:
+【1】HERO — visually arresting, pick ONE treatment that fits the ${ds.name} aesthetic:
    • Full-bleed image with mask-reveal animated text
    • Asymmetric split (oversized headline breaking the grid)
    • Text-stroke / background-clip:text huge type with image showing through letters
    • Layered photo composition with parallax depth on scroll
-   • Gradient mesh background with floating photo cards / 3D tilted images
-   • Duotone-treated hero image with brand colors
+   • Floating photo cards / 3D tilted images
+   • Duotone-treated hero image with accent-color filter
    • Marquee headline scrolling horizontally
-   • Animated text entrance (word-by-word stagger fade-up)
+   • Word-by-word stagger fade-up entrance
 
 【2】TYPOGRAPHY — must POP, not whisper:
-   • Display headlines using clamp() for fluid sizing (e.g., clamp(3rem, 9vw, 8rem))
-   • Mix display + body font with dramatic contrast (weight, style, scale)
-   • Use text-stroke, drop-shadow, or gradient/clip-path text for impact
-   • Vary weight dramatically across the page (300 vs 900 in the same section)
-   • Letter-spacing manipulation: tight for display, expanded for eyebrows
-   • Pairings to consider: Fraunces+Inter, Cormorant+Manrope, Bebas+Barlow,
-     DM Serif Display+DM Sans, Space Grotesk+Space Mono, Playfair+Lato,
-     Outfit+Lora, Archivo Black+Inter, Editorial New-style serifs, Geist Sans,
-     Instrument Serif, Migra. DO NOT default to plain Inter everywhere.
+   • Display headlines clamp(3rem, 9vw, 8rem) — go BIG with ${ds.fonts.display}
+   • Dramatic weight contrast — pair 300 weight against 900 weight in same composition
+   • Letter-spacing manipulation: tight (-0.04em) for display, expanded (0.2em) for eyebrows
+   • Use italic display variant where ${ds.fonts.display} supports it
+   • text-stroke / background-clip:text / drop-shadow for impact on chosen accent moments
 
 【3】SCROLL-TRIGGERED ANIMATIONS (use IntersectionObserver — no library):
    • Text fade-up with stagger on entry
@@ -518,68 +690,51 @@ ${photosBlock}
    • Count-up stat animations (animate numbers from 0 to target)
    • Section dividers that reveal as you scroll
    • Sticky scroll sections where content transforms
-   • Clip-path reveal masks on images and text
 
-【4】CUSTOM VISUAL TREATMENTS:
-   • Custom inline SVG decorations (organic blobs, waves, geometric patterns)
-   • Duotone or color-washed photos using CSS filters (filter: grayscale + mix-blend)
-   • Glassmorphism panels (backdrop-filter: blur)
+【4】CUSTOM VISUAL TREATMENTS (pick what fits the ${ds.name} mood):
+   • Custom inline SVG decorations (organic shapes, geometric patterns, hand-drawn lines)
+   • Duotone or color-washed photos using CSS filters (mix-blend-mode with --accent)
+   • Glassmorphism panels where appropriate
    • Subtle grain/noise texture overlays
-   • Animated gradient meshes
-   • Custom shape clip-paths on images (organic blobs, hexagons, arches)
-   • Color-mix() palette work
+   • Custom shape clip-paths on images (organic blobs, hexagons, arches, raw rectangles depending on aesthetic)
 
 【5】INTERACTIVE MICRO-MOMENTS:
    • Buttons: hover lift + shadow + color shift (NOT flat rects)
    • Cards: 3D tilt on hover (transform: perspective + rotate3d)
-   • Magnetic CTA buttons that nudge toward cursor (subtle JS)
+   • Magnetic CTA buttons (subtle JS nudge toward cursor)
    • Smooth scroll with offset for sticky nav
-   • Image galleries: hover zoom, mask reveals, cursor-following effects
-   • Custom cursor dot follower (optional, must be tasteful)
+   • Image hover: zoom, mask reveal, or filter shift
 
 【6】LAYOUT VARIATION — BREAK THE GRID:
-   • Asymmetric splits (image left 60%, text right 40%, or reversed/staggered)
+   • Asymmetric splits (image left 60%, text right 40%, or staggered)
    • Overlapping elements (negative margins, z-index layering)
    • Diagonal section dividers using clip-path: polygon
    • Marquee / scrolling text bands between sections
-   • Bento grids (different sized boxes packed cleverly)
+   • Bento grids (different-sized boxes packed cleverly)
    • Magazine-style editorial spreads with pull-quotes
    • DO NOT make every section be "centered heading + 3 columns"
 
-【7】THE SIGNATURE MOMENT — every site needs ONE wow:
-   Pick something memorable just for this business. Examples:
-   • Animated SVG hero illustration
-   • Horizontal-scroll photo gallery with snap
-   • Auto-scrolling "wall of reviews" marquee
-   • Stat counters with animated count-up
-   • 3D card flip / parallax on reviews
-   • Masked-text marquee header
-   • Animated logo / wordmark
-   • Before/after CSS-only slider
+【7】SIGNATURE MOMENT — every site needs ONE wow:
+   Pick something memorable for THIS business: animated SVG, horizontal-scroll gallery,
+   reviews marquee, count-up stat block, masked-text marquee header, before/after slider,
+   or animated wordmark. Make it specific to the business.
 
-═══ STRUCTURE (every section gets its own visual identity) ═══
+═══ STRUCTURE (every section gets its own visual identity within the ${ds.name} system) ═══
 1. Sticky nav — logo + 4-5 nav links + prominent CTA. Becomes glassmorphic / colored on scroll.
-2. HERO — wow treatment from above
-3. Trust band / marquee — could be auto-scrolling: "★★★★★ ${biz.rating} • ${biz.review_count} Reviews • Since X • Family Owned • Open Today •" etc.
-4. ABOUT — magazine-style asymmetric, NOT centered. Pull quote from a review. Image with creative crop.
-5. SERVICES (4-6) — varied card design. NOT boring 3-column. Could be bento, alternating L/R, vertical numbered, etc. Invent realistic services for "${biz.category}" with 1-2 sentence descriptions.
-6. GALLERY — creative grid using ALL provided photos. Try bento, masonry, horizontal scroll-snap, or mixed sizes. Apply duotone filters or hover effects.
-7. REVIEWS — feature the BEST review as a huge pull-quote with author. Then a marquee/grid of the others. Use real Google reviews verbatim.
-8. CONTACT — split layout: info (phone, address, hours) + visual contact form. Add a styled "Get in touch" or map placeholder visual.
+2. HERO — wow treatment from above, using --accent prominently
+3. Trust band / marquee — auto-scrolling: "★★★★★ ${biz.rating} • ${biz.review_count} Reviews • Family Owned • Open Today •"
+4. ABOUT — magazine-style asymmetric, NOT centered. Pull quote from a review. Image with creative crop using --accent filters.
+5. SERVICES (4-6) — varied card design fitting the ${ds.name} aesthetic. Invent realistic services for "${biz.category}" with 1-2 sentence descriptions.
+6. GALLERY — creative grid using ALL provided photos. Bento, masonry, horizontal scroll-snap. Apply duotone/filter effects using --accent.
+7. REVIEWS — feature the BEST review as a huge pull-quote with author. Then marquee/grid of others. Use real Google reviews verbatim.
+8. CONTACT — split layout: info (phone, address, hours) + visual contact form. --accent on the CTA.
 9. FOOTER — branded, not just links. Include hours, social-ish icons, copyright.
-
-═══ DESIGN DIRECTION CHOICES (pick ONE and commit) ═══
-Editorial magazine • Swiss minimal with grid lines • Brutalist with raw type •
-Glassmorphism + gradient mesh • Organic curves and blobs • Warm cozy hand-crafted •
-Sharp industrial mono • Soft luxe gold accents • Neo-retro 80s • Y2K nostalgia •
-Mid-century modern • Art-deco geometric • Modern editorial serif •
-Anti-design intentional rough • Premium minimal with lots of whitespace
 
 ═══ TECHNICAL REQUIREMENTS ═══
 • Single self-contained HTML file. ALL CSS inline in <style>. ALL JS inline in <script>.
 • Mobile-first responsive — test mentally at 375px, 768px, 1280px.
 • Font Awesome 6.5 via CDN: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
-• Google Fonts via @import in <style>.
+• Google Fonts via the @import shown above (ONLY ${ds.fonts.display} and ${ds.fonts.body}).
 • Modern CSS only: custom properties, grid, flex, clamp(), aspect-ratio, color-mix() ok.
 • IntersectionObserver for scroll animations (no GSAP / no jQuery / no libs).
 • Use the EXACT photo URLs given — DON'T invent placeholders.
@@ -588,8 +743,9 @@ Anti-design intentional rough • Premium minimal with lots of whitespace
 • Accessibility: semantic HTML, alt-equivalents, focus states, prefers-reduced-motion respected.
 
 ═══ ANTI-PATTERNS — DO NOT ═══
-✗ Generic SaaS purple/indigo gradient look
-✗ Inter as the only font
+✗ Default to brown/beige/amber tones (unless the palette above explicitly contains them)
+✗ Use any font besides ${ds.fonts.display} and ${ds.fonts.body}
+✗ Generic SaaS purple/indigo gradient look (unless that IS your accent)
 ✗ Centered hero with subtitle + CTA + image below (boring default)
 ✗ Boring 3-column "Our Services" with identical cards
 ✗ Centered headings on every section
@@ -602,9 +758,9 @@ Anti-design intentional rough • Premium minimal with lots of whitespace
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
-Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after. NO explanations.
+Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after.
 
-Give this site real ambition — typical output for a wow-factor flagship is 25,000-40,000 characters of carefully crafted code. Don't shortcut. Don't skim. Make this site WIN.`;
+Build the entire site within the **${ds.name}** design system. Show real ambition — typical output is 25,000-40,000 characters of carefully crafted code. Make this site WIN.`;
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
 
