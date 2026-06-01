@@ -910,12 +910,12 @@ Import via @import in <style>:
    • Use italic display variant where ${ds.fonts.display} supports it
    • text-stroke / background-clip:text / drop-shadow for impact on chosen accent moments
 
-【3】SCROLL-TRIGGERED ANIMATIONS (use IntersectionObserver — no library):
-   • Text fade-up with stagger on entry
+【3】SCROLL-TRIGGERED ANIMATIONS — use GSAP ScrollTrigger (see Agency-Tier Libraries below) or IntersectionObserver fallback:
+   • Text fade-up with stagger on entry (split chars/words)
    • Image parallax / scale-up on scroll
    • Count-up stat animations (animate numbers from 0 to target)
    • Section dividers that reveal as you scroll
-   • Sticky scroll sections where content transforms
+   • Sticky scroll sections where content transforms / morphs
 
 【4】CUSTOM VISUAL TREATMENTS (pick what fits the ${ds.name} mood):
    • Custom inline SVG decorations (organic shapes, geometric patterns, hand-drawn lines)
@@ -944,6 +944,109 @@ Import via @import in <style>:
    Pick something memorable for THIS business: animated SVG, horizontal-scroll gallery,
    reviews marquee, count-up stat block, masked-text marquee header, before/after slider,
    or animated wordmark. Make it specific to the business.
+
+═══════════════════════════════════════════════════════════════════════════════
+═══ AGENCY-TIER LIBRARIES — USE THESE FOR THE "SHOCK" FACTOR ═══
+═══════════════════════════════════════════════════════════════════════════════
+You have access to the industry-standard premium libraries via CDN. THESE are
+what separates an Awwwards Site of the Day winner from a generic template.
+Include them and USE them — don't just load them and use vanilla CSS.
+
+【LIB1】GSAP 3 + ScrollTrigger — the animation standard for award-winning sites
+   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+
+   ALWAYS use GSAP for:
+   • Hero text reveal (split chars/words manually, stagger with gsap.from)
+   • Image parallax with scrub on scroll (ScrollTrigger + yPercent)
+   • Pinned sections where content morphs as user scrolls
+   • Counter animations (gsap.to with onUpdate)
+   • Mouse-following effects with smooth interpolation
+   • Hover micro-interactions with eased timelines
+
+   Required pattern at the top of your script:
+   gsap.registerPlugin(ScrollTrigger);
+
+   Example hero reveal:
+   const splitTitle = document.querySelector('.hero-title').textContent.split('');
+   document.querySelector('.hero-title').innerHTML = splitTitle.map(c => '<span class="char">' + c + '</span>').join('');
+   gsap.from('.hero-title .char', { y: 100, opacity: 0, duration: 1, stagger: 0.03, ease: 'power4.out' });
+
+   Example parallax:
+   gsap.to('.parallax-img', { yPercent: -20, ease: 'none', scrollTrigger: { trigger: '.section', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+
+【LIB2】Lenis — smooth inertia scroll (every premium 2024+ site has this)
+   <script src="https://unpkg.com/lenis@1.1.6/dist/lenis.min.js"></script>
+
+   ALWAYS initialize at the start of your script:
+   const lenis = new Lenis({ duration: 1.2, easing: t => Math.min(1, 1.001 - Math.pow(2, -10 * t)) });
+   function raf(t) { lenis.raf(t); requestAnimationFrame(raf); }
+   requestAnimationFrame(raf);
+   lenis.on('scroll', ScrollTrigger.update);  // sync with GSAP
+   gsap.ticker.add(t => lenis.raf(t * 1000));
+   gsap.ticker.lagSmoothing(0);
+
+   This alone makes the site feel like it costs 5x more.
+
+【LIB3】Three.js — real WebGL 3D (use SELECTIVELY for ONE signature moment)
+   <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+   Use for ONE of these in the hero (pick what fits the ${ds.name} aesthetic):
+   • Particle field reacting to mouse (300-600 particles in --accent color)
+   • Animated mesh gradient (PlaneGeometry with custom shader using --accent / --accent2)
+   • Floating geometric shapes (icosahedrons, torus knots) with subtle rotation
+   • Distorted blob using IcosahedronGeometry with vertex shader noise
+   • Wireframe geometry that morphs as you scroll
+
+   Constraints:
+   • Keep under 200 lines of Three.js code
+   • Use ONLY core Three.js (no OrbitControls, no loaders)
+   • Position the canvas absolutely behind hero content with z-index: 0
+   • Set canvas size on resize: renderer.setSize(window.innerWidth, window.innerHeight)
+   • Use lower density / disable on mobile if perf concern
+   • USE --accent / --accent2 for any colors
+
+【LIB4】(optional) Lottie — JSON animations from LottieFiles
+   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+   Use sparingly for: success states, hero icons, decorative loops.
+
+═══ THE "SHOCK" HERO — pick ONE for this site ═══
+The first 2 seconds when the business owner loads this site must be UNFORGETTABLE.
+Pick ONE of these treatments for the hero (match the ${ds.name} aesthetic):
+
+▸ OPTION A — 3D PARTICLE FIELD
+  Three.js scene: 300-500 floating particles in --accent. Particles slowly drift
+  and respond to mouse with parallax. Massive split-char headline overlay
+  with GSAP stagger reveal. Subtle vignette.
+
+▸ OPTION B — ANIMATED MESH GRADIENT
+  Three.js PlaneGeometry with custom shader. Smooth gradient using --bg, --accent,
+  --accent2 (or palette shifts) that morphs over time. Display type overlay with
+  text-stroke or background-clip mask.
+
+▸ OPTION C — SCROLL-PINNED NARRATIVE HERO
+  Hero pinned for 200vh via ScrollTrigger. As user scrolls, layered text/images
+  transform, swap, or morph. Reveals the brand story across 2-3 "frames" before
+  releasing to the next section.
+
+▸ OPTION D — KINETIC SPLIT-CHAR HERO
+  Display title is split into individual characters. Each animates in independently
+  (rotate, translate, scale with stagger). On hover, characters subtly react.
+  Photo behind has GSAP slow zoom + parallax.
+
+▸ OPTION E — DUOTONE PHOTO + NOISE OVERLAY
+  Hero photo with --accent duotone (mix-blend-mode). Animated SVG noise texture
+  overlay. GSAP infinite slow zoom. Huge headline with stroked outline + filled
+  characters interleaved.
+
+▸ OPTION F — MARQUEE BAND + TILT GALLERY
+  Auto-scrolling marquee of huge type at top (e.g. business name x10, separated by
+  ★). Below: bento gallery cards that tilt in 3D as mouse moves using CSS perspective +
+  GSAP mouse tracking.
+
+The "shock" treatment IS the centerpiece. Don't water it down.
+
+═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 ═══ MOBILE EXCELLENCE — TREAT MOBILE AS PRIMARY (NON-NEGOTIABLE) ═══
@@ -1049,12 +1152,14 @@ The mobile experience must be as polished as desktop — NOT a shrunk-down after
 • Mobile-first responsive — TEST mentally at 375×667 (iPhone SE) first, then 414×896, then 768, 1280. All MOBILE EXCELLENCE rules above are mandatory.
 • Font Awesome 6.5 via CDN: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
 • Google Fonts via the @import shown above (ONLY ${ds.fonts.display} and ${ds.fonts.body}).
+• GSAP + ScrollTrigger via CDN (mandatory): see Agency-Tier Libraries section above
+• Lenis smooth scroll via CDN (mandatory): see Agency-Tier Libraries section above
+• Three.js via CDN (optional but encouraged for hero shock factor)
 • Modern CSS only: custom properties, grid, flex, clamp(), aspect-ratio, color-mix() ok.
-• IntersectionObserver for scroll animations (no GSAP / no jQuery / no libs).
 • Use the EXACT photo URLs given — DON'T invent placeholders.
 • <title>${biz.name}</title>
-• Performance: lean. No external libs. Inline SVG instead of icon fonts where it shines.
-• Accessibility: semantic HTML, alt-equivalents, focus states, prefers-reduced-motion respected.
+• Performance: lean. Inline SVG instead of icon fonts where it shines. Lazy-load below-fold images.
+• Accessibility: semantic HTML, alt-equivalents, focus states, prefers-reduced-motion respected (skip GSAP/Three.js animations for those users).
 
 ═══ ANTI-PATTERNS — DO NOT ═══
 ✗ Default to brown/beige/amber tones (unless the palette above explicitly contains them)
@@ -1079,13 +1184,20 @@ The mobile experience must be as polished as desktop — NOT a shrunk-down after
    ✗ Desktop nav links shown on mobile (must have hamburger)
    ✗ Forgetting the sticky bottom mobile CTA bar
 
+✗ AGENCY-TIER FAILS — never do these:
+   ✗ Skipping GSAP / Lenis entirely — these libraries are MANDATORY for premium feel
+   ✗ Loading Three.js but only using it for a static rectangle (use it meaningfully or skip it)
+   ✗ Plain CSS hover transitions when you have GSAP available (use eased timelines)
+   ✗ Hard scroll behavior when Lenis is available (always init Lenis at top of script)
+   ✗ Building hero with only HTML/CSS when one of the SHOCK HERO options should be used
+
 ═══ COPY VOICE — match this business ═══
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
 Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after.
 
-Build the entire site within the **${ds.name}** design system. Show real ambition — typical output is 25,000-40,000 characters of carefully crafted code. Make this site WIN.`;
+Build the entire site within the **${ds.name}** design system using GSAP + Lenis (mandatory) and Three.js (encouraged for the SHOCK hero). Show real ambition — typical output is 35,000-55,000 characters of carefully crafted code. Make this site WIN.`;
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
 
