@@ -104,6 +104,21 @@ async function initDB() {
     role TEXT NOT NULL DEFAULT 'user',
     created_at TIMESTAMPTZ DEFAULT NOW()
   );`);
+
+  // Client editor: each generated site can have an opt-in editor token
+  // and a JSONB blob of text/image overrides applied at serve/export time.
+  await pool.query(`ALTER TABLE generated_sites ADD COLUMN IF NOT EXISTS edit_token TEXT UNIQUE;`);
+  await pool.query(`ALTER TABLE generated_sites ADD COLUMN IF NOT EXISTS edit_overrides JSONB DEFAULT '{}'::jsonb;`);
+  await pool.query(`ALTER TABLE generated_sites ADD COLUMN IF NOT EXISTS edit_updated_at TIMESTAMPTZ;`);
+
+  // Image uploads from the client editor (small images, stored as bytes)
+  await pool.query(`CREATE TABLE IF NOT EXISTS editor_uploads (
+    id TEXT PRIMARY KEY,                -- random short id used in URL
+    site_id INT REFERENCES generated_sites(id) ON DELETE CASCADE,
+    content_type TEXT DEFAULT 'image/jpeg',
+    bytes BYTEA NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );`);
   console.log("✅ DB ready");
 }
 
@@ -273,47 +288,248 @@ async function resolveGoogleUrl(url) {
 }
 
 function extractPlaceIdFromUrl(url) {
-  // Standard CID
+  // ChIJ format inside data param
   const m1 = url.match(/!1s(ChIJ[A-Za-z0-9_-]+)/);
   if (m1) return m1[1];
-  // ?place_id= param
+  // ?place_id= or &place_id=
   const m2 = url.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
   if (m2) return m2[1];
+  // place_id in any segment (rare)
+  const m3 = url.match(/place_id[=:]([A-Za-z0-9_-]{20,})/);
+  if (m3) return m3[1];
   return null;
 }
 
 function extractCoordsFromUrl(url) {
+  // @lat,lng,zoom
   const m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  // !3d{lat}!4d{lng}
   const m2 = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
   if (m2) return { lat: parseFloat(m2[1]), lng: parseFloat(m2[2]) };
+  // ll=lat,lng (older format)
+  const m3 = url.match(/[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (m3) return { lat: parseFloat(m3[1]), lng: parseFloat(m3[2]) };
+  // q=lat,lng (rare)
+  const m4 = url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (m4) return { lat: parseFloat(m4[1]), lng: parseFloat(m4[2]) };
   return null;
 }
 
 function extractNameFromUrl(url) {
-  const m = url.match(/\/place\/([^/@?]+)/);
-  if (m) return decodeURIComponent(m[1].replace(/\+/g, " "));
+  // /place/Name/ or /place/Name@
+  const m1 = url.match(/\/place\/([^/@?]+)/);
+  if (m1) {
+    const n = decodeURIComponent(m1[1].replace(/\+/g, " "));
+    if (n && !n.match(/^-?\d+\.\d+,-?\d+\.\d+$/)) return n;  // skip if it's just coordinates
+  }
+  // /search/Name
+  const m2 = url.match(/\/search\/([^/@?]+)/);
+  if (m2) {
+    const n = decodeURIComponent(m2[1].replace(/\+/g, " "));
+    if (n) return n;
+  }
+  // ?q=Name or &q=Name (Google Maps search style)
+  const m3 = url.match(/[?&]q=([^&]+)/);
+  if (m3) {
+    const n = decodeURIComponent(m3[1].replace(/\+/g, " "));
+    // skip if q is just coordinates
+    if (n && !n.match(/^-?\d+\.\d+,-?\d+\.\d+$/)) return n;
+  }
+  // ?query=Name
+  const m4 = url.match(/[?&]query=([^&]+)/);
+  if (m4) return decodeURIComponent(m4[1].replace(/\+/g, " "));
   return null;
 }
 
+// Last-resort: fetch the page HTML and pull the business name from <title> or og:title.
+// Works for share.google, maps.app.goo.gl, and the new Google Maps interface that doesn't
+// embed place_id in the URL anymore.
+async function scrapePageForName(url) {
+  try {
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    const html = await r.text();
+    // Try og:title first (cleanest)
+    const og = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i)
+            || html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:title["']/i);
+    if (og) {
+      const clean = og[1].replace(/\s*[-·|]\s*Google\s*Maps?\s*$/i, "").trim();
+      if (clean) return clean;
+    }
+    // <title> fallback
+    const ti = html.match(/<title>([^<]+)<\/title>/i);
+    if (ti) {
+      const clean = ti[1].replace(/\s*[-·|]\s*Google\s*Maps?\s*$/i, "").trim();
+      if (clean && !clean.toLowerCase().startsWith("google maps")) return clean;
+    }
+    // og:url often contains the real Maps URL even when the document URL doesn't
+    const ogUrl = html.match(/<meta\s+property=["']og:url["']\s+content=["']([^"']+)["']/i);
+    if (ogUrl) {
+      const innerName = extractNameFromUrl(ogUrl[1]);
+      if (innerName) return innerName;
+    }
+    return null;
+  } catch (e) {
+    console.warn("scrape failed:", e.message);
+    return null;
+  }
+}
+
 async function urlToPlaceId(url) {
+  console.log("🔗 Input URL:", url.slice(0, 200));
   const resolved = await resolveGoogleUrl(url);
-  console.log("📍 Resolved:", resolved.slice(0, 200));
+  console.log("📍 Resolved:", resolved.slice(0, 250));
 
+  // 1) Direct place_id in URL
   let placeId = extractPlaceIdFromUrl(resolved);
-  if (placeId) return placeId;
+  if (placeId) {
+    console.log("✅ Found place_id directly:", placeId);
+    return placeId;
+  }
 
+  // 2) Name + coords from URL → FindPlace
   const name = extractNameFromUrl(resolved);
   const coords = extractCoordsFromUrl(resolved);
 
   if (name) {
     const q = coords ? `${name} near ${coords.lat},${coords.lng}` : name;
-    console.log("🔍 Falling back to FindPlace:", q);
-    const c = await placesFindPlace(q);
-    if (c?.place_id) return c.place_id;
+    console.log("🔍 FindPlace fallback (from URL):", q);
+    try {
+      const c = await placesFindPlace(q);
+      if (c?.place_id) {
+        console.log("✅ FindPlace succeeded:", c.place_id);
+        return c.place_id;
+      }
+    } catch (e) { console.warn("FindPlace failed:", e.message); }
   }
 
-  throw new Error("Couldn't extract a place from this URL. Use the Discover tab and search the business by name instead.");
+  // 3) Scrape the page itself for the business name
+  console.log("🕷️ Trying HTML scrape for business name...");
+  const scrapedName = await scrapePageForName(resolved);
+  if (scrapedName) {
+    console.log("✅ Scraped name:", scrapedName);
+    const q = coords ? `${scrapedName} near ${coords.lat},${coords.lng}` : scrapedName;
+    try {
+      const c = await placesFindPlace(q);
+      if (c?.place_id) {
+        console.log("✅ FindPlace with scraped name succeeded:", c.place_id);
+        return c.place_id;
+      }
+    } catch (e) { console.warn("FindPlace (scraped) failed:", e.message); }
+  }
+
+  throw new Error(`Couldn't extract a place from this URL. Resolved to: ${resolved.slice(0, 120)}${resolved.length > 120 ? "..." : ""}. Try copying the URL after the page fully loads, or use Discover and search by name.`);
+}
+
+// ─── CLIENT EDITOR HELPERS ────────────────────────────────────────────────────
+// 1) Post-process generated HTML to mark editable elements with data-edit-id.
+//    Runs after AI generates the site. Targets headings, paragraphs, and images.
+function addEditMarkers(html) {
+  let textIdx = 0;
+  let imgIdx  = 0;
+
+  // Heading/paragraph/quote tags with simple text content (no nested elements with text)
+  html = html.replace(
+    /<(h[1-6]|p|blockquote|cite|q|figcaption|li)(\s[^>]*?)?>([^<]{2,400})<\/\1>/gi,
+    (match, tag, attrs = "", text) => {
+      if (attrs.includes("data-edit-id")) return match;
+      const trimmed = text.trim();
+      if (!trimmed || /^[\d\s.,$%★]+$/.test(trimmed)) return match; // skip pure numbers/symbols
+      const id = `text-${++textIdx}`;
+      return `<${tag}${attrs} data-edit-id="${id}">${text}</${tag}>`;
+    }
+  );
+
+  // Spans inside that contain only text (often used for inline emphasis)
+  html = html.replace(
+    /<(span|strong|em|a)(\s[^>]*?)?>([^<]{3,200})<\/\1>/gi,
+    (match, tag, attrs = "", text) => {
+      if (attrs.includes("data-edit-id")) return match;
+      const trimmed = text.trim();
+      if (!trimmed || trimmed.length < 3) return match;
+      if (/^[\d\s.,$%★]+$/.test(trimmed)) return match;
+      const id = `text-${++textIdx}`;
+      return `<${tag}${attrs} data-edit-id="${id}">${text}</${tag}>`;
+    }
+  );
+
+  // Images
+  html = html.replace(/<img(\s[^>]*?)?>/gi, (match, attrs = "") => {
+    if (attrs.includes("data-edit-id")) return match;
+    const id = `img-${++imgIdx}`;
+    return `<img${attrs} data-edit-id="${id}">`;
+  });
+
+  return html;
+}
+
+// 2) Extract list of editable elements (for the editor UI sidebar)
+function extractEditables(html) {
+  const items = [];
+  // Text elements
+  const textRe = /<([a-z0-9]+)([^>]*data-edit-id="(text-\d+)"[^>]*)>([^<]*)<\/\1>/gi;
+  let m;
+  while ((m = textRe.exec(html))) {
+    const tag = m[1].toLowerCase();
+    const id = m[3];
+    const text = m[4].trim();
+    if (!text) continue;
+    items.push({
+      id, type: "text", tag,
+      value: text,
+      preview: text.slice(0, 80) + (text.length > 80 ? "…" : ""),
+    });
+  }
+  // Image elements
+  const imgRe = /<img([^>]*data-edit-id="(img-\d+)"[^>]*)>/gi;
+  while ((m = imgRe.exec(html))) {
+    const attrs = m[1];
+    const id = m[2];
+    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/);
+    items.push({
+      id, type: "image",
+      value: srcMatch ? srcMatch[1] : "",
+    });
+  }
+  return items;
+}
+
+// 3) Apply overrides (text + image) to the saved HTML
+function applyEditOverrides(html, overrides = {}) {
+  if (!overrides || !Object.keys(overrides).length) return html;
+  for (const [id, value] of Object.entries(overrides)) {
+    if (value == null || value === "") continue;
+    if (id.startsWith("text-")) {
+      // Replace inner text of element with this data-edit-id
+      const re = new RegExp(
+        `(<[a-z0-9]+[^>]*data-edit-id="${id}"[^>]*>)([^<]*)(<\\/[a-z0-9]+>)`,
+        "i"
+      );
+      html = html.replace(re, (m, openTag, _oldText, closeTag) => {
+        const safe = String(value).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `${openTag}${safe}${closeTag}`;
+      });
+    } else if (id.startsWith("img-")) {
+      // Replace src attribute on the image with this data-edit-id
+      const re = new RegExp(`<img([^>]*data-edit-id="${id}"[^>]*)>`, "i");
+      html = html.replace(re, (m, attrs) => {
+        const cleaned = attrs.replace(/\s+src=["'][^"']*["']/i, "");
+        return `<img src="${value}"${cleaned}>`;
+      });
+    }
+  }
+  return html;
+}
+
+// 4) Random URL-safe token (for editor links)
+function randomToken(len = 24) {
+  return require("crypto").randomBytes(len).toString("base64url");
 }
 
 // 1×1 transparent PNG — sent when Google fails so the browser never shows a broken icon
@@ -879,6 +1095,10 @@ async function buildAndSaveSite(biz, areaSearched = "") {
     html = await generateUniqueHTML(biz); // one retry
   }
 
+  // Post-process: tag every editable element with data-edit-id so the client
+  // editor (and download endpoint) can target it later.
+  html = addEditMarkers(html);
+
   const slug = `b${saved.id}-${Date.now().toString(36)}`;
   await pool.query(
     `INSERT INTO generated_sites (business_id, slug, html) VALUES ($1,$2,$3)`,
@@ -1439,7 +1659,7 @@ app.delete("/api/businesses/:id", async (req, res) => {
 app.get("/api/export/:id", requireAuth, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT b.name, b.preview_slug, gs.html
+      `SELECT b.name, b.preview_slug, gs.html, gs.edit_overrides
          FROM businesses b
          JOIN generated_sites gs ON gs.slug = b.preview_slug
         WHERE b.id = $1`,
@@ -1447,12 +1667,16 @@ app.get("/api/export/:id", requireAuth, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: "No built site for this business" });
 
-    // Rewrite /photo?ref=X → https://<this-backend>/photo?ref=X so the HTML is
-    // portable to any domain. Photos continue being served from sitesprint backend
-    // (already DB-cached, so reliable).
+    // Apply client edits (text & image overrides) BEFORE rewriting photo URLs
+    let html = applyEditOverrides(r.rows[0].html, r.rows[0].edit_overrides || {});
+
+    // Rewrite /photo?ref=X and /editor-upload/X → absolute URLs so the HTML is
+    // portable to any domain (images keep working from sitesprint backend).
     const baseUrl = process.env.BASE_URL ||
       `${req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : req.protocol}://${req.get("host")}`;
-    let html = r.rows[0].html.replace(/(["'(])\/photo\?ref=/g, `$1${baseUrl}/photo?ref=`);
+    html = html
+      .replace(/(["'(])\/photo\?ref=/g, `$1${baseUrl}/photo?ref=`)
+      .replace(/(["'(])\/editor-upload\//g, `$1${baseUrl}/editor-upload/`);
 
     const safeName = (r.rows[0].name || "site").replace(/[^a-z0-9]/gi, "_").toLowerCase();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -1464,15 +1688,688 @@ app.get("/api/export/:id", requireAuth, async (req, res) => {
   }
 });
 
-// PREVIEW — serve the AI-generated HTML
+// PREVIEW — serve the AI-generated HTML (with client edits applied)
 app.get("/preview/:slug", async (req, res) => {
   try {
-    const r = await pool.query("SELECT html FROM generated_sites WHERE slug=$1", [req.params.slug]);
+    const r = await pool.query("SELECT html, edit_overrides FROM generated_sites WHERE slug=$1", [req.params.slug]);
     if (!r.rows.length) return res.status(404).send("<h1>Site not found</h1>");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(r.rows[0].html);
+    const html = applyEditOverrides(r.rows[0].html, r.rows[0].edit_overrides || {});
+    res.send(html);
   } catch (e) { res.status(500).send(e.message); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// CLIENT EDITOR — token-gated, no login needed
+// ═══════════════════════════════════════════════════════════════════════
+
+// 1) Admin/owner enables the editor and gets a shareable link
+app.post("/api/sites/:id/enable-editor", requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT gs.id, gs.edit_token, b.name
+         FROM generated_sites gs
+         JOIN businesses b ON b.id = gs.business_id
+        WHERE b.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "No site for this business" });
+
+    let token = r.rows[0].edit_token;
+    if (!token) {
+      token = randomToken(18);
+      await pool.query("UPDATE generated_sites SET edit_token=$1 WHERE id=$2", [token, r.rows[0].id]);
+    }
+    const baseUrl = process.env.BASE_URL ||
+      `${req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : req.protocol}://${req.get("host")}`;
+    res.json({
+      token,
+      editor_url: `${baseUrl}/editor/${token}`,
+      business_name: r.rows[0].name,
+    });
+  } catch (e) {
+    console.error("enable-editor:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 2) Editor data — list of editable elements + current overrides (token-gated, public)
+app.get("/api/editor/:token/data", async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT gs.html, gs.edit_overrides, gs.slug, b.name, b.id AS biz_id
+         FROM generated_sites gs
+         JOIN businesses b ON b.id = gs.business_id
+        WHERE gs.edit_token = $1`,
+      [req.params.token]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "Invalid editor link" });
+
+    const row = r.rows[0];
+    const editables = extractEditables(row.html);
+    res.json({
+      business_name: row.name,
+      slug: row.slug,
+      editables,
+      overrides: row.edit_overrides || {},
+    });
+  } catch (e) {
+    console.error("editor data:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 3) Save overrides
+app.post("/api/editor/:token/save", async (req, res) => {
+  try {
+    const { overrides } = req.body;
+    if (!overrides || typeof overrides !== "object")
+      return res.status(400).json({ error: "overrides object required" });
+
+    const r = await pool.query(
+      "UPDATE generated_sites SET edit_overrides=$1, edit_updated_at=NOW() WHERE edit_token=$2 RETURNING id",
+      [overrides, req.params.token]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: "Invalid editor link" });
+    res.json({ saved: true });
+  } catch (e) {
+    console.error("editor save:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 4) Client uploads an image (replaces an img-N slot)
+app.post("/api/editor/:token/upload", express.raw({ type: ["image/*"], limit: "8mb" }), async (req, res) => {
+  try {
+    const r = await pool.query("SELECT id FROM generated_sites WHERE edit_token=$1", [req.params.token]);
+    if (!r.rows.length) return res.status(404).json({ error: "Invalid editor link" });
+    if (!req.body || !req.body.length) return res.status(400).json({ error: "no image data" });
+    if (req.body.length > 6 * 1024 * 1024) return res.status(400).json({ error: "image too large (max 6 MB)" });
+
+    const uploadId = randomToken(10);
+    const contentType = req.headers["content-type"] || "image/jpeg";
+    await pool.query(
+      "INSERT INTO editor_uploads (id, site_id, content_type, bytes) VALUES ($1,$2,$3,$4)",
+      [uploadId, r.rows[0].id, contentType, req.body]
+    );
+    res.json({ url: `/editor-upload/${uploadId}` });
+  } catch (e) {
+    console.error("editor upload:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 5) Serve uploaded images
+app.get("/editor-upload/:id", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT content_type, bytes FROM editor_uploads WHERE id=$1", [req.params.id]);
+    if (!r.rows.length) return sendTransparentPNG(res);
+    res.setHeader("Content-Type", r.rows[0].content_type || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(r.rows[0].bytes);
+  } catch (e) { sendTransparentPNG(res); }
+});
+
+// 6) The editor HTML page itself (public, token-gated by URL)
+app.get("/editor/:token", async (req, res) => {
+  const r = await pool.query("SELECT 1 FROM generated_sites WHERE edit_token=$1", [req.params.token]);
+  if (!r.rows.length) return res.status(404).send("<h1>Invalid editor link</h1>");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(editorPageHtml(req.params.token));
+});
+
+function editorPageHtml(token) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edit Your Site</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+    background: #06060c; color: #e2e8f0; height: 100vh; display: flex; overflow: hidden;
+  }
+  #sidebar {
+    width: 380px; min-width: 380px; background: #0a0a14; border-right: 1px solid rgba(255,255,255,.06);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  #header h1 { font-size: 20px; font-weight: 800; background: linear-gradient(135deg,#818cf8,#c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.5px; }
+  #header .biz { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+  #header .hint { font-size: 11px; color: #64748b; margin-top: 8px; line-height: 1.5; }
+  #items { flex: 1; overflow-y: auto; padding: 8px 0; }
+  .group-label { font-size: 10px; font-weight: 700; color: #475569; padding: 14px 20px 6px; letter-spacing: 2px; text-transform: uppercase; }
+  .item { padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,.04); }
+  .item-label { font-size: 10px; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+  .item textarea, .item input[type="text"] {
+    width: 100%; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08);
+    color: #e2e8f0; border-radius: 8px; padding: 9px 11px; font-size: 13px;
+    font-family: inherit; resize: vertical; outline: none; line-height: 1.5;
+  }
+  .item textarea:focus, .item input:focus { border-color: rgba(129,140,248,.5); }
+  .item textarea { min-height: 60px; }
+  .img-preview {
+    width: 100%; aspect-ratio: 4/3; background: #14141a; border-radius: 8px;
+    background-size: cover; background-position: center; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.08); display: flex; align-items: center; justify-content: center;
+    color: #64748b; font-size: 12px; transition: all .2s;
+  }
+  .img-preview:hover { border-color: #6366f1; }
+  .img-preview input { display: none; }
+  #actions {
+    padding: 14px 20px; border-top: 1px solid rgba(255,255,255,.06);
+    display: flex; flex-direction: column; gap: 8px; background: #0a0a14;
+  }
+  button {
+    padding: 11px 16px; border-radius: 9px; border: none; font-weight: 700;
+    font-size: 13px; font-family: inherit; cursor: pointer; transition: all .15s;
+  }
+  .btn-primary { background: linear-gradient(135deg,#6366f1,#8b5cf6); color: #fff; }
+  .btn-primary:hover { transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ghost { background: rgba(255,255,255,.04); color: #94a3b8; border: 1px solid rgba(255,255,255,.08); }
+  #status { font-size: 12px; color: #64748b; text-align: center; padding: 4px; min-height: 20px; }
+  #preview { flex: 1; height: 100vh; background: #fff; position: relative; }
+  #preview iframe { width: 100%; height: 100%; border: none; }
+  #loading {
+    position: absolute; inset: 0; background: rgba(6,6,12,.95);
+    display: flex; align-items: center; justify-content: center; color: #94a3b8;
+    z-index: 10; transition: opacity .3s;
+  }
+  #loading.hidden { opacity: 0; pointer-events: none; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 9999;
+  }
+  .toast.success { background: #10b981; color: #fff; }
+  .toast.error { background: #ef4444; color: #fff; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <div id="header">
+      <h1>Edit Your Site</h1>
+      <div class="biz" id="biz-name">Loading…</div>
+      <div class="hint">Click any field below to edit. Changes preview instantly on the right. Click "Save" when finished.</div>
+    </div>
+    <div id="items">Loading…</div>
+    <div id="status"></div>
+    <div id="actions">
+      <button class="btn-primary" id="save-btn" onclick="saveAll()">💾 Save Changes</button>
+      <button class="btn-ghost" onclick="window.open(previewSlug ? '/preview/' + previewSlug : '#', '_blank')">↗ Open in New Tab</button>
+    </div>
+  </div>
+  <div id="preview">
+    <div id="loading">Loading preview…</div>
+    <iframe id="frame" src=""></iframe>
+  </div>
+
+<script>
+  const TOKEN = ${JSON.stringify(token)};
+  let editables = [];
+  let overrides = {};
+  let previewSlug = '';
+  let saveTimer;
+
+  function toast(msg, type='success') {
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  async function init() {
+    try {
+      const r = await fetch('/api/editor/' + TOKEN + '/data');
+      if (!r.ok) throw new Error('Failed to load');
+      const d = await r.json();
+      document.getElementById('biz-name').textContent = d.business_name;
+      editables = d.editables || [];
+      overrides = d.overrides || {};
+      previewSlug = d.slug;
+      renderItems();
+      const frame = document.getElementById('frame');
+      frame.onload = () => { document.getElementById('loading').classList.add('hidden'); };
+      frame.src = '/preview/' + d.slug + '?t=' + Date.now();
+    } catch (e) {
+      document.getElementById('items').innerHTML = '<div style="padding:20px;color:#ef4444">Error: ' + e.message + '</div>';
+    }
+  }
+
+  function renderItems() {
+    const wrap = document.getElementById('items');
+    wrap.innerHTML = '';
+    const texts = editables.filter(e => e.type === 'text');
+    const imgs = editables.filter(e => e.type === 'image');
+
+    if (texts.length) {
+      const label = document.createElement('div');
+      label.className = 'group-label';
+      label.textContent = '✏️ Text (' + texts.length + ')';
+      wrap.appendChild(label);
+      texts.forEach(it => wrap.appendChild(makeTextItem(it)));
+    }
+    if (imgs.length) {
+      const label = document.createElement('div');
+      label.className = 'group-label';
+      label.textContent = '🖼️ Images (' + imgs.length + ')';
+      wrap.appendChild(label);
+      imgs.forEach(it => wrap.appendChild(makeImageItem(it)));
+    }
+  }
+
+  function makeTextItem(it) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    const current = (overrides[it.id] !== undefined ? overrides[it.id] : it.value);
+    const isLong = current.length > 80;
+    div.innerHTML =
+      '<div class="item-label">' + it.tag.toUpperCase() + '</div>' +
+      (isLong
+        ? '<textarea>' + escape(current) + '</textarea>'
+        : '<input type="text" value="' + escape(current) + '">');
+    const input = div.querySelector('textarea, input');
+    input.addEventListener('input', () => {
+      overrides[it.id] = input.value;
+      scheduleAutoSave();
+    });
+    return div;
+  }
+
+  function makeImageItem(it) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    const current = (overrides[it.id] !== undefined ? overrides[it.id] : it.value);
+    const fullUrl = current.startsWith('http') ? current : (window.location.origin + current);
+    div.innerHTML =
+      '<div class="item-label">Image · ' + it.id + '</div>' +
+      '<label class="img-preview" style="background-image:url(\\'' + fullUrl + '\\')">' +
+        '<input type="file" accept="image/*">' +
+        '<span style="background:rgba(0,0,0,.6);padding:4px 10px;border-radius:4px">Click to replace</span>' +
+      '</label>';
+    const input = div.querySelector('input[type="file"]');
+    const preview = div.querySelector('.img-preview');
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+      preview.innerHTML = '<span>Uploading…</span>';
+      try {
+        const r = await fetch('/api/editor/' + TOKEN + '/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': file.type },
+          body: file,
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Upload failed');
+        overrides[it.id] = d.url;
+        preview.style.backgroundImage = "url('" + d.url + "')";
+        preview.innerHTML = '<input type="file" accept="image/*"><span style="background:rgba(0,0,0,.6);padding:4px 10px;border-radius:4px">Click to replace</span>';
+        preview.querySelector('input').addEventListener('change', input.onchange);
+        scheduleAutoSave();
+        toast('Image uploaded');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
+    return div;
+  }
+
+  function escape(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function scheduleAutoSave() {
+    document.getElementById('status').textContent = '✎ Unsaved changes';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveAll, 2500);
+  }
+
+  async function saveAll() {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    document.getElementById('status').textContent = '';
+    try {
+      const r = await fetch('/api/editor/' + TOKEN + '/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overrides }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
+      btn.textContent = '✓ Saved';
+      // Refresh iframe to show changes
+      document.getElementById('frame').src = '/preview/' + previewSlug + '?t=' + Date.now();
+      document.getElementById('loading').classList.remove('hidden');
+      toast('All changes saved');
+      setTimeout(() => { btn.textContent = '💾 Save Changes'; btn.disabled = false; }, 1500);
+    } catch (e) {
+      btn.textContent = '💾 Save Changes'; btn.disabled = false;
+      toast(e.message, 'error');
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// STANDALONE PHP EXPORT — single index.php file that includes everything
+// The client uploads this to their cPanel and edits on their own domain.
+// We're completely out of the loop after handoff.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Add the column once (idempotent)
+pool.query(`ALTER TABLE generated_sites ADD COLUMN IF NOT EXISTS standalone_password TEXT;`).catch(()=>{});
+
+app.get("/api/export/:id/php", requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT gs.id, gs.html, gs.edit_overrides, gs.standalone_password, b.name
+         FROM generated_sites gs
+         JOIN businesses b ON b.id = gs.business_id
+        WHERE b.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "No site for this business" });
+
+    // Apply any edits made on sitesprint (so they're baked into the PHP)
+    let html = applyEditOverrides(r.rows[0].html, r.rows[0].edit_overrides || {});
+
+    // Rewrite /photo?ref=... to absolute URLs (sitesprint backend serves the cached photos)
+    const baseUrl = process.env.BASE_URL ||
+      `${req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : req.protocol}://${req.get("host")}`;
+    html = html
+      .replace(/(["'(])\/photo\?ref=/g, `$1${baseUrl}/photo?ref=`)
+      .replace(/(["'(])\/editor-upload\//g, `$1${baseUrl}/editor-upload/`);
+
+    // Generate or reuse standalone password
+    let password = r.rows[0].standalone_password;
+    if (!password) {
+      // alphanumeric only — safe for PHP single-quoted string and URL params
+      password = require("crypto").randomBytes(6).toString("base64url").replace(/[-_]/g, "x");
+      await pool.query("UPDATE generated_sites SET standalone_password=$1 WHERE id=$2", [password, r.rows[0].id]);
+    }
+
+    // Build the PHP file
+    const phpContent = buildStandalonePhp(html, password);
+
+    const safeName = (r.rows[0].name || "site").replace(/[^a-z0-9]/gi, "_").toLowerCase();
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="index.php"`);
+    res.setHeader("X-Edit-Password", password); // also available in header for frontend
+    res.send(phpContent);
+  } catch (e) {
+    console.error("php export:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Helper: get the password (for re-displaying after page reload)
+app.get("/api/sites/:id/php-password", requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT gs.standalone_password
+         FROM generated_sites gs
+         JOIN businesses b ON b.id = gs.business_id
+        WHERE b.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "Not found" });
+    res.json({ password: r.rows[0].standalone_password });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function buildStandalonePhp(html, password) {
+  // Base64-encode the HTML so we don't have to worry about quote/heredoc escaping
+  const b64 = Buffer.from(html, "utf-8").toString("base64");
+
+  // The editor JS that gets injected ONLY when in edit mode.
+  // This runs in the client's browser on their own domain. It POSTs to the same
+  // index.php with ?api=save and ?api=upload.
+  const editorJs = `
+(function(){
+  var STYLE = \`
+    #se-toggle{position:fixed;top:14px;right:14px;z-index:99998;background:#6366f1;color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;font-family:-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+    #se-panel{position:fixed;right:0;top:0;bottom:0;width:380px;max-width:90vw;background:#0a0a14;color:#e2e8f0;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Inter,sans-serif;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.5);border-left:1px solid rgba(255,255,255,.08);transform:translateX(100%);transition:transform .3s ease}
+    #se-panel.open{transform:translateX(0)}
+    #se-header{padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center}
+    #se-header h2{margin:0;font-size:17px;font-weight:800;background:linear-gradient(135deg,#818cf8,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    #se-close{background:none;border:none;color:#64748b;cursor:pointer;font-size:22px;padding:0;width:30px;height:30px}
+    #se-hint{padding:10px 20px;font-size:11px;color:#64748b;border-bottom:1px solid rgba(255,255,255,.04);line-height:1.5}
+    #se-items{flex:1;overflow-y:auto;padding:8px 0}
+    .se-group{font-size:10px;font-weight:700;color:#475569;padding:14px 20px 6px;letter-spacing:2px;text-transform:uppercase}
+    .se-item{padding:11px 20px;border-bottom:1px solid rgba(255,255,255,.04)}
+    .se-item label{display:block;font-size:10px;color:#64748b;margin-bottom:5px;text-transform:uppercase;letter-spacing:1px}
+    .se-item textarea,.se-item input[type=text]{width:100%;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);color:#e2e8f0;border-radius:7px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;outline:none;line-height:1.5;box-sizing:border-box}
+    .se-item textarea:focus,.se-item input:focus{border-color:rgba(129,140,248,.5)}
+    .se-item textarea{min-height:55px}
+    .se-img{width:100%;aspect-ratio:4/3;background:#14141a;border-radius:7px;background-size:cover;background-position:center;cursor:pointer;border:1px solid rgba(255,255,255,.08);position:relative;overflow:hidden}
+    .se-img:hover{border-color:#6366f1}
+    .se-img span{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:4px 10px;border-radius:4px;font-size:11px;color:#fff}
+    .se-img input{display:none}
+    #se-actions{padding:14px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:8px}
+    #se-actions button{padding:11px 16px;border-radius:8px;border:none;font-weight:700;font-size:13px;font-family:inherit;cursor:pointer}
+    #se-save{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff}
+    #se-save:disabled{opacity:.5;cursor:not-allowed}
+    #se-logout{background:rgba(239,68,68,.1);color:#fca5a5;border:1px solid rgba(239,68,68,.3) !important}
+    #se-status{padding:6px 20px;font-size:11px;color:#64748b;text-align:center}
+    .se-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#10b981;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;z-index:100000;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    .se-toast.error{background:#ef4444}
+  \`;
+  var style=document.createElement('style');style.textContent=STYLE;document.head.appendChild(style);
+
+  var toggle=document.createElement('button');
+  toggle.id='se-toggle';toggle.textContent='✏️ Edit';
+  document.body.appendChild(toggle);
+
+  var panel=document.createElement('div');
+  panel.id='se-panel';
+  panel.innerHTML=\`
+    <div id="se-header">
+      <h2>Edit Your Site</h2>
+      <button id="se-close">×</button>
+    </div>
+    <div id="se-hint">Click any text to edit it, or any image to replace it. Changes save when you click Save.</div>
+    <div id="se-items"></div>
+    <div id="se-status"></div>
+    <div id="se-actions">
+      <button id="se-save">💾 Save Changes</button>
+      <button id="se-logout">Exit Edit Mode</button>
+    </div>
+  \`;
+  document.body.appendChild(panel);
+
+  toggle.onclick=function(){panel.classList.add('open');toggle.style.display='none'};
+  document.getElementById('se-close').onclick=function(){panel.classList.remove('open');toggle.style.display=''};
+  document.getElementById('se-logout').onclick=function(){window.location.href='?api=logout'};
+
+  function toast(msg,err){var t=document.createElement('div');t.className='se-toast'+(err?' error':'');t.textContent=msg;document.body.appendChild(t);setTimeout(function(){t.remove()},2500)}
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+  var overrides={};
+  var items=document.getElementById('se-items');
+  var texts=[],imgs=[];
+  document.querySelectorAll('[data-edit-id]').forEach(function(el){
+    var id=el.getAttribute('data-edit-id');
+    if(!id) return;
+    if(id.indexOf('text-')===0) texts.push({id:id,el:el});
+    else if(id.indexOf('img-')===0) imgs.push({id:id,el:el});
+  });
+
+  if(texts.length){
+    var g=document.createElement('div');g.className='se-group';g.textContent='✏️ Text ('+texts.length+')';items.appendChild(g);
+    texts.forEach(function(it){
+      var div=document.createElement('div');div.className='se-item';
+      var v=it.el.textContent.trim();
+      var long=v.length>80;
+      div.innerHTML='<label>'+it.id+' · '+it.el.tagName.toLowerCase()+'</label>'+(long?'<textarea>'+esc(v)+'</textarea>':'<input type="text" value="'+esc(v)+'">');
+      var input=div.querySelector('textarea, input');
+      input.addEventListener('input',function(){overrides[it.id]=input.value;it.el.textContent=input.value});
+      input.addEventListener('focus',function(){it.el.scrollIntoView({behavior:'smooth',block:'center'})});
+      items.appendChild(div);
+    });
+  }
+
+  if(imgs.length){
+    var g2=document.createElement('div');g2.className='se-group';g2.textContent='🖼️ Images ('+imgs.length+')';items.appendChild(g2);
+    imgs.forEach(function(it){
+      var div=document.createElement('div');div.className='se-item';
+      div.innerHTML='<label>'+it.id+'</label><label class="se-img" style="background-image:url(\\''+it.el.src+'\\')"><input type="file" accept="image/*"><span>Click to replace</span></label>';
+      var fi=div.querySelector('input[type=file]');
+      var preview=div.querySelector('.se-img');
+      fi.addEventListener('change',async function(){
+        var f=fi.files[0];if(!f)return;
+        preview.innerHTML='<span>Uploading...</span>';
+        try{
+          var r=await fetch('?api=upload',{method:'POST',headers:{'Content-Type':f.type},body:f});
+          var d=await r.json();
+          if(!r.ok)throw new Error(d.error||'Upload failed');
+          overrides[it.id]=d.url;
+          it.el.src=d.url;
+          preview.style.backgroundImage="url('"+d.url+"')";
+          preview.innerHTML='<input type="file" accept="image/*"><span>Click to replace</span>';
+          preview.querySelector('input').addEventListener('change',fi.onchange);
+          toast('Image uploaded');
+        }catch(e){preview.innerHTML='<input type="file" accept="image/*"><span style="background:#ef4444">Failed</span>';toast(e.message,1)}
+      });
+      items.appendChild(div);
+    });
+  }
+
+  document.getElementById('se-save').onclick=async function(){
+    var btn=this;btn.disabled=true;btn.textContent='⏳ Saving...';
+    try{
+      var r=await fetch('?api=save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides:overrides})});
+      var d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Save failed');
+      btn.textContent='✅ Saved';
+      toast('All changes saved');
+      setTimeout(function(){btn.textContent='💾 Save Changes';btn.disabled=false},1500);
+    }catch(e){btn.textContent='💾 Save Changes';btn.disabled=false;toast(e.message,1)}
+  };
+})();`;
+
+  return `<?php
+// =========================================================================
+//   SiteSprint Standalone Site + Editor
+//   Upload this single file to your cPanel public_html/ folder.
+//   Visit yourdomain.com to see the site.
+//   Visit yourdomain.com?edit=PASSWORD to enter edit mode.
+// =========================================================================
+
+$EDIT_PASSWORD = '${password}';
+$DATA_FILE = __DIR__ . '/_data.json';
+$UPLOAD_DIR = __DIR__ . '/uploads';
+$COOKIE_NAME = 'siteedit_${password.slice(0, 4)}';
+
+function ssLoadData() {
+  global $DATA_FILE;
+  if (!file_exists($DATA_FILE)) return ['overrides' => new stdClass()];
+  $d = @json_decode(file_get_contents($DATA_FILE), true);
+  return is_array($d) ? $d : ['overrides' => new stdClass()];
+}
+function ssSaveData($data) {
+  global $DATA_FILE;
+  @file_put_contents($DATA_FILE, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+}
+function ssIsAuth() {
+  global $EDIT_PASSWORD, $COOKIE_NAME;
+  if (($_GET['edit'] ?? null) === $EDIT_PASSWORD) return true;
+  if (($_COOKIE[$COOKIE_NAME] ?? null) === $EDIT_PASSWORD) return true;
+  return false;
+}
+
+// ── API ROUTES ───────────────────────────────────────────────────────────
+$api = $_GET['api'] ?? null;
+
+if ($api === 'save') {
+  header('Content-Type: application/json');
+  if (!ssIsAuth()) { http_response_code(401); echo '{"error":"unauthorized"}'; exit; }
+  $body = json_decode(file_get_contents('php://input'), true) ?: [];
+  ssSaveData(['overrides' => $body['overrides'] ?? [], 'updated_at' => date('c')]);
+  echo json_encode(['saved' => true]);
+  exit;
+}
+
+if ($api === 'upload') {
+  header('Content-Type: application/json');
+  if (!ssIsAuth()) { http_response_code(401); echo '{"error":"unauthorized"}'; exit; }
+  if (!is_dir($UPLOAD_DIR)) @mkdir($UPLOAD_DIR, 0755, true);
+  if (!is_dir($UPLOAD_DIR)) { http_response_code(500); echo '{"error":"cannot create uploads dir"}'; exit; }
+  $data = file_get_contents('php://input');
+  if (!$data || strlen($data) > 8000000) { http_response_code(400); echo '{"error":"missing or too large (max 8MB)"}'; exit; }
+  $contentType = $_SERVER['CONTENT_TYPE'] ?? 'image/jpeg';
+  $ext = 'jpg';
+  if (strpos($contentType, 'png') !== false) $ext = 'png';
+  elseif (strpos($contentType, 'webp') !== false) $ext = 'webp';
+  elseif (strpos($contentType, 'gif') !== false) $ext = 'gif';
+  $name = bin2hex(random_bytes(8)) . '.' . $ext;
+  @file_put_contents($UPLOAD_DIR . '/' . $name, $data);
+  echo json_encode(['url' => 'uploads/' . $name]);
+  exit;
+}
+
+if ($api === 'logout') {
+  setcookie($COOKIE_NAME, '', time() - 3600, '/');
+  header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+  exit;
+}
+
+// Set cookie after first auth via ?edit=
+if (($_GET['edit'] ?? null) === $EDIT_PASSWORD) {
+  setcookie($COOKIE_NAME, $EDIT_PASSWORD, time() + 86400 * 30, '/');
+}
+$ssInEditMode = ssIsAuth();
+
+// ── LOAD HTML + APPLY OVERRIDES ──────────────────────────────────────────
+$ssData = ssLoadData();
+$ssOverrides = $ssData['overrides'] ?? [];
+
+$html = base64_decode('${b64}');
+
+foreach ((array)$ssOverrides as $id => $value) {
+  $value = (string)$value;
+  $idQuoted = preg_quote($id, '/');
+  if (strpos($id, 'text-') === 0) {
+    $html = preg_replace_callback(
+      '/(<[a-zA-Z0-9]+[^>]*data-edit-id="' . $idQuoted . '"[^>]*>)([^<]*)(<\\/[a-zA-Z0-9]+>)/',
+      function($m) use ($value) {
+        return $m[1] . htmlspecialchars($value, ENT_QUOTES | ENT_HTML5) . $m[3];
+      },
+      $html,
+      1
+    );
+  } elseif (strpos($id, 'img-') === 0) {
+    $safeValue = htmlspecialchars($value, ENT_QUOTES);
+    $html = preg_replace_callback(
+      '/<img([^>]*data-edit-id="' . $idQuoted . '"[^>]*)>/',
+      function($m) use ($safeValue) {
+        $attrs = preg_replace('/\\s+src=("[^"]*"|\\'[^\\']*\\')/', '', $m[1]);
+        return '<img src="' . $safeValue . '"' . $attrs . '>';
+      },
+      $html,
+      1
+    );
+  }
+}
+
+// ── INJECT EDITOR JS WHEN IN EDIT MODE ───────────────────────────────────
+if ($ssInEditMode) {
+  $editorJs = <<<'EOJS_SITESPRINT'
+${editorJs}
+EOJS_SITESPRINT;
+  $html = str_replace('</body>', '<script>' . $editorJs . '</script></body>', $html);
+}
+
+header('Content-Type: text/html; charset=utf-8');
+echo $html;
+`;
+}
 
 const PORT = process.env.PORT || 3001;
 initDB()
