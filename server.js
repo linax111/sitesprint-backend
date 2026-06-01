@@ -823,10 +823,19 @@ async function generateUniqueHTML(biz) {
 
   const hoursBlock = biz.hours?.length ? biz.hours.join(" | ") : "Hours not listed";
 
+  // Detect manual-entry businesses (no Google reviews/rating)
+  const isManual = !biz.review_count && !biz.rating;
+  const ratingLine = (biz.rating > 0 && biz.review_count > 0)
+    ? `Rating: ${biz.rating}★ from ${biz.review_count} Google reviews`
+    : `Rating: (not available — DO NOT invent a rating or review count; do not show star ratings anywhere on the site)`;
+  const sourceLine = isManual
+    ? "Source: MANUAL ENTRY — business is not on Google Places. No reviews, no rating, possibly few photos. Design accordingly: lean into typography, brand color, and the description below. Skip review/rating UI entirely."
+    : "Source: Google Places listing (rich data available)";
+
   // Deterministically pick a design system based on this business's place_id.
   // Two different businesses → different design systems → no two sites look alike.
   const ds = pickDesignSystem(biz.place_id || biz.name);
-  console.log(`🎨 Design system for ${biz.name}: ${ds.name}`);
+  console.log(`🎨 Design system for ${biz.name}: ${ds.name}${isManual ? " (manual entry)" : ""}`);
 
   const paletteBlock = `
   --bg:      ${ds.palette.bg};       /* page background */
@@ -846,9 +855,10 @@ Name: ${biz.name}
 Category: ${biz.category}
 Address: ${biz.address || "Address not listed"}
 Phone: ${biz.phone || "Phone not listed"}
-Rating: ${biz.rating}★ from ${biz.review_count} Google reviews
+${ratingLine}
 Hours: ${hoursBlock}
 Description: ${biz.description || "(none)"}
+${sourceLine}
 
 ═══ REAL GOOGLE 5-STAR REVIEWS (use VERBATIM — these are real customers) ═══
 ${reviewsBlock}
@@ -935,20 +945,108 @@ Import via @import in <style>:
    reviews marquee, count-up stat block, masked-text marquee header, before/after slider,
    or animated wordmark. Make it specific to the business.
 
+═══════════════════════════════════════════════════════════════════════════════
+═══ MOBILE EXCELLENCE — TREAT MOBILE AS PRIMARY (NON-NEGOTIABLE) ═══
+═══════════════════════════════════════════════════════════════════════════════
+70%+ of local-business visitors come from mobile (Google Maps clicks on phones).
+The mobile experience must be as polished as desktop — NOT a shrunk-down afterthought.
+
+🎯 MOBILE-SPECIFIC REQUIREMENTS — implement ALL of these:
+
+【M1】HAMBURGER NAV at ≤768px
+   • Desktop: full horizontal nav
+   • Mobile: hamburger icon (right side) → opens FULL-SCREEN overlay menu
+   • Overlay: huge tappable links (clamp 28px-40px), backdrop blur, slide/fade in
+   • Pattern:
+     @media(max-width:768px){
+       .nav-links{display:none;}
+       .hamburger{display:flex;}
+       .mobile-menu.open{display:flex;}
+     }
+   • Hamburger toggles via JS: button.onclick = () => menu.classList.toggle('open')
+   • Lock body scroll when menu open: document.body.style.overflow = open ? 'hidden' : ''
+
+【M2】GALLERY MUST BE A SWIPE CAROUSEL ON MOBILE — this is critical, the user has complained about static galleries on mobile
+   • Use CSS scroll-snap, NOT a JS library:
+     .gallery-mobile{
+       display:flex; gap:14px; overflow-x:auto; scroll-snap-type:x mandatory;
+       padding:0 20px 20px; -webkit-overflow-scrolling:touch;
+       scrollbar-width:none; /* hide scrollbar */
+     }
+     .gallery-mobile::-webkit-scrollbar{display:none;}
+     .gallery-mobile > *{
+       flex:0 0 85%; scroll-snap-align:center;
+       aspect-ratio:4/5; border-radius:14px; overflow:hidden;
+     }
+   • Show ALL photos in the carousel (don't truncate)
+   • Add dot indicators below that highlight the current slide (IntersectionObserver)
+   • Add a subtle "← swipe →" hint that fades out after first interaction
+   • Each card: rounded corners, real photo bg, name/caption overlay at bottom
+
+【M3】HERO that doesn't break on mobile
+   • Massive desktop text must scale DOWN appropriately — use clamp() religiously:
+     font-size: clamp(2.5rem, 11vw, 8rem);
+   • On mobile: stack hero elements vertically. If desktop is asymmetric split, mobile is full-width
+   • Hero photo: full-width on mobile with smart object-position (so faces aren't cropped weird)
+   • CTAs: minimum 52px tall on mobile, full-width or near-full-width
+   • Test mentally at 375×667 (iPhone SE) — the smallest realistic viewport
+
+【M4】STICKY MOBILE CTA BAR (bottom of viewport, ≤768px only)
+   • A persistent action bar fixed to bottom on mobile only:
+     position:fixed; bottom:0; left:0; right:0; padding:12px 16px;
+     background:var(--surface); backdrop-filter:blur(20px);
+     border-top:1px solid var(--border); z-index:50;
+     display:flex; gap:10px;
+   • Two buttons: "📞 Call" (tel: link to ${biz.phone || "phone"}) and "📍 Directions" (Google Maps link)
+   • Hide on desktop with @media(min-width:769px){display:none}
+   • This is the #1 most-clicked element on mobile local-business sites
+
+【M5】SERVICES section on mobile
+   • If desktop is bento/asymmetric, mobile becomes a vertical stack OR a horizontal scroll-snap row
+   • Cards: full-width with adequate padding (20px+), 44px+ touch targets
+   • Avoid 2-column grids at 375px — too cramped
+
+【M6】TYPOGRAPHY fluidity — every font-size declaration MUST use clamp()
+   • h1: clamp(2.5rem, 9vw, 7rem)
+   • h2: clamp(1.8rem, 5vw, 4rem)
+   • h3: clamp(1.3rem, 3vw, 2rem)
+   • body: clamp(15px, 1.05vw, 17px)
+   • NO fixed pixel sizes anywhere on text
+
+【M7】TOUCH TARGETS
+   • Every button/link minimum 44×44px on mobile
+   • Padding inside buttons: 14px 22px minimum
+   • Spacing between tappable elements: 8px minimum
+
+【M8】MOBILE LAYOUT FIXES
+   • Replace ALL multi-column flex/grid with single column at ≤640px
+   • Replace overlapping/negative-margin elements with stacked positive-flow on mobile
+   • Remove decorative absolute-positioned elements that would clutter mobile
+   • Padding: 16-20px horizontal on mobile (not 80px+)
+   • The site must work AT 320px without horizontal scroll
+
+【M9】PERFORMANCE on mobile
+   • Lazy-load images below the fold: <img loading="lazy" decoding="async">
+   • Use the FIRST photo for hero, smaller photos for cards
+   • No autoplay videos
+   • Respect prefers-reduced-motion — disable scroll animations for those users
+
+═══════════════════════════════════════════════════════════════════════════════
+
 ═══ STRUCTURE (every section gets its own visual identity within the ${ds.name} system) ═══
 1. Sticky nav — logo + 4-5 nav links + prominent CTA. Becomes glassmorphic / colored on scroll.
 2. HERO — wow treatment from above, using --accent prominently
 3. Trust band / marquee — auto-scrolling: "★★★★★ ${biz.rating} • ${biz.review_count} Reviews • Family Owned • Open Today •"
 4. ABOUT — magazine-style asymmetric, NOT centered. Pull quote from a review. Image with creative crop using --accent filters.
 5. SERVICES (4-6) — varied card design fitting the ${ds.name} aesthetic. Invent realistic services for "${biz.category}" with 1-2 sentence descriptions.
-6. GALLERY — creative grid using ALL provided photos. Bento, masonry, horizontal scroll-snap. Apply duotone/filter effects using --accent.
+6. GALLERY — creative grid using ALL provided photos. Desktop: bento/masonry/asymmetric grid. Mobile (≤768px): MUST become a horizontal scroll-snap carousel with visible swipe indicators (dots or progress bar). Every photo must be visible/reachable on mobile — never hide photos with display:none on small screens.
 7. REVIEWS — feature the BEST review as a huge pull-quote with author. Then marquee/grid of others. Use real Google reviews verbatim.
 8. CONTACT — split layout: info (phone, address, hours) + visual contact form. --accent on the CTA.
 9. FOOTER — branded, not just links. Include hours, social-ish icons, copyright.
 
 ═══ TECHNICAL REQUIREMENTS ═══
 • Single self-contained HTML file. ALL CSS inline in <style>. ALL JS inline in <script>.
-• Mobile-first responsive — test mentally at 375px, 768px, 1280px.
+• Mobile-first responsive — TEST mentally at 375×667 (iPhone SE) first, then 414×896, then 768, 1280. All MOBILE EXCELLENCE rules above are mandatory.
 • Font Awesome 6.5 via CDN: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css
 • Google Fonts via the @import shown above (ONLY ${ds.fonts.display} and ${ds.fonts.body}).
 • Modern CSS only: custom properties, grid, flex, clamp(), aspect-ratio, color-mix() ok.
@@ -969,6 +1067,17 @@ Import via @import in <style>:
 ✗ Flat boxy cards without depth or character
 ✗ Lorem ipsum or generic copy — use the real business voice
 ✗ A site that could be ANY business
+
+✗ MOBILE FAILS — never do these:
+   ✗ Static photo grid on mobile that just stacks vertically with everything tiny
+   ✗ display:none on photos at mobile breakpoints (every photo must be visible)
+   ✗ Fixed pixel font-sizes (must use clamp())
+   ✗ Multi-column layouts at <640px width
+   ✗ Tiny touch targets (<44px)
+   ✗ Horizontal scroll on the whole page (overflow-x:hidden on body if needed)
+   ✗ Hero text so big it overflows on iPhone SE (375px wide)
+   ✗ Desktop nav links shown on mobile (must have hamburger)
+   ✗ Forgetting the sticky bottom mobile CTA bar
 
 ═══ COPY VOICE — match this business ═══
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
@@ -1369,7 +1478,34 @@ app.post("/api/discover", async (req, res) => {
     // Rough cost estimate (USD) — Text Search $0.032, Details Basic+Contact $0.037
     const estCostUSD = (queries.length * 0.032 + detailsChecked * 0.037).toFixed(2);
 
-    console.log(`✅ ${area}: checked ${detailsChecked} (cache hits: ${detailsFromCache}), found ${withoutWebsite.length} without website. Est cost: $${estCostUSD}`);
+    // Check which place_ids already have a built site in our DB,
+    // so the UI can show "View Site" instead of "Build Unique Site"
+    // (avoids re-running expensive Claude generation by accident).
+    const placeIds = withoutWebsite.map(b => b.place_id).filter(Boolean);
+    let existingMap = new Map();
+    if (placeIds.length) {
+      const er = await pool.query(
+        `SELECT place_id, id, preview_slug, status
+           FROM businesses
+          WHERE place_id = ANY($1::text[]) AND preview_slug IS NOT NULL`,
+        [placeIds]
+      );
+      for (const row of er.rows) existingMap.set(row.place_id, row);
+    }
+
+    // Tag each candidate with whether it's already built
+    for (const b of withoutWebsite) {
+      const ex = existingMap.get(b.place_id);
+      if (ex) {
+        b.already_built = true;
+        b.existing_id = ex.id;
+        b.existing_slug = ex.preview_slug;
+        b.existing_status = ex.status;
+      }
+    }
+
+    const alreadyBuiltCount = withoutWebsite.filter(b => b.already_built).length;
+    console.log(`✅ ${area}: checked ${detailsChecked} (cache hits: ${detailsFromCache}), found ${withoutWebsite.length} without website (${alreadyBuiltCount} already built). Est cost: $${estCostUSD}`);
 
     res.json({
       area,
@@ -1379,6 +1515,7 @@ app.post("/api/discover", async (req, res) => {
       details_checked: detailsChecked,
       details_from_cache: detailsFromCache,
       count: withoutWebsite.length,
+      already_built_count: alreadyBuiltCount,
       estimated_cost_usd: estCostUSD,
       businesses: withoutWebsite,
     });
@@ -1428,6 +1565,59 @@ app.post("/api/from-url", async (req, res) => {
     res.json({ business: saved, slug, previewUrl: `/preview/${slug}` });
   } catch (e) {
     console.error("🔴 from-url:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// UPLOAD PHOTO — for manual entries (no Google profile yet)
+// Reuses editor_uploads table with NULL site_id for pre-build uploads
+app.post("/api/upload-photo", express.raw({ type: ["image/*"], limit: "8mb" }), async (req, res) => {
+  try {
+    if (!req.body || !req.body.length) return res.status(400).json({ error: "no image data" });
+    if (req.body.length > 6 * 1024 * 1024) return res.status(400).json({ error: "image too large (max 6 MB)" });
+    const uploadId = randomToken(10);
+    const contentType = req.headers["content-type"] || "image/jpeg";
+    await pool.query(
+      "INSERT INTO editor_uploads (id, site_id, content_type, bytes) VALUES ($1, NULL, $2, $3)",
+      [uploadId, contentType, req.body]
+    );
+    res.json({ url: `/editor-upload/${uploadId}` });
+  } catch (e) {
+    console.error("upload-photo:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// FROM SCRATCH — build site from manual data (no Google profile)
+// For businesses that only exist on Instagram, WhatsApp, etc.
+app.post("/api/from-scratch", async (req, res) => {
+  try {
+    const { name, category, description, phone, address, hours, photo_urls, instagram } = req.body;
+    if (!name?.trim() || !category?.trim()) {
+      return res.status(400).json({ error: "Business name and category are required" });
+    }
+
+    // Build a biz object that matches what shapeBusiness() produces, just from manual input
+    const biz = {
+      place_id:     `manual-${randomToken(10)}`,  // synthetic so upsert works
+      name:         name.trim(),
+      category:     category.trim(),
+      address:      (address || "").trim(),
+      phone:        (phone || "").trim(),
+      rating:       0,
+      review_count: 0,
+      website:      null,
+      hours:        Array.isArray(hours) ? hours.filter(Boolean) : [],
+      reviews:      [],
+      photos:       Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : [],
+      description:  (description || "").trim() + (instagram ? `\n\nInstagram: @${instagram.replace(/^@/, "")}` : ""),
+      google_url:   instagram ? `https://instagram.com/${instagram.replace(/^@/, "")}` : null,
+    };
+
+    const { saved, slug } = await buildAndSaveSite(biz);
+    res.json({ business: saved, slug, previewUrl: `/preview/${slug}` });
+  } catch (e) {
+    console.error("🔴 from-scratch:", e);
     res.status(500).json({ error: e.message });
   }
 });
