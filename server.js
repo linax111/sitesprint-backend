@@ -867,6 +867,79 @@ ${reviewsBlock}
 ${photosBlock}
 
 ═══════════════════════════════════════════════════════════════════════════════
+═══ ⚠️ PRIORITY ORDER (READ THIS FIRST — IT OVERRIDES EVERYTHING ELSE BELOW) ═══
+═══════════════════════════════════════════════════════════════════════════════
+When you can't fit everything, drop items from the BOTTOM of this list, NEVER the top.
+
+PRIORITY 1 (MANDATORY — if missing, the output is REJECTED):
+   ▸ Every section heading has REAL CONTENT below it (no empty sections)
+   ▸ Services section has 4-6 actual service CARDS with names + descriptions + prices
+   ▸ Team section has 3-6 actual team member CARDS with names + roles + bios + avatars
+   ▸ Reviews section has 3-6 actual review CARDS with verbatim quotes + author + 5 stars
+   ▸ Contact section has an actual FORM (name, phone, service select, message textarea) + visible phone/address/hours
+   ▸ Gallery uses ALL provided photos
+   ▸ Hero image visible on mobile
+   ▸ Sticky bottom CTA bar on mobile
+
+PRIORITY 2 (HIGHLY DESIRED):
+   ▸ Beautiful design system applied (palette, fonts, mood)
+   ▸ GSAP scroll animations on key elements
+   ▸ Lenis smooth scroll
+   ▸ Mobile swipe carousel for gallery
+   ▸ Hamburger menu for mobile nav
+
+PRIORITY 3 (NICE TO HAVE — drop these if running tight):
+   ▸ Three.js WebGL hero (skip if it eats your output budget)
+   ▸ Complex marquee animations
+   ▸ Lottie animations
+   ▸ Elaborate decorative SVGs
+
+If you find yourself running long on the hero/animations and worry about completing all content cards: DROP the Three.js scene, use a simpler CSS+GSAP hero instead, and use the saved tokens to COMPLETE all content sections. An incomplete site is worse than a less-flashy complete site.
+
+═══════════════════════════════════════════════════════════════════════════════
+═══ 📋 CONTENT MANIFEST — OUTPUT THIS FIRST AS AN HTML COMMENT ═══
+═══════════════════════════════════════════════════════════════════════════════
+Before <!DOCTYPE html>, output a content manifest as an HTML comment. This commits you to producing this content. Example:
+
+<!--
+CONTENT MANIFEST — must be present in final HTML:
+
+SERVICES (5):
+1. Precision Haircut — $25 — Classic cut with consultation
+2. Beard Trim & Shape — $15 — Hot towel + shaping
+3. Color Treatment — $80+ — Full color, highlights, balayage
+4. Kids Cut — $18 — Ages 12 and under
+5. Hair Treatment — $35 — Deep conditioning
+
+TEAM (5):
+1. Bella — Owner / Senior Stylist — 5+ years
+2. Maria — Color Specialist — Mentioned in 3 reviews
+3. Snow — Barber — Customer favorite
+4. Fran — Stylist — From description
+5. Denia — Stylist — From description
+
+REVIEWS (4):
+1. Maria H — "Best place in town to get your hair done..."
+2. Leonardo R — "I've been going to her for the past 5 years..."
+3. [from Google reviews provided above]
+4. [from Google reviews provided above]
+
+CONTACT FORM:
+- Name (text input)
+- Phone (tel input)
+- Service interested in (select dropdown of services above)
+- Preferred date (date input)
+- Message (textarea)
+- Submit button (styled with --accent)
+-->
+<!DOCTYPE html>
+<html>...
+
+EVERY ITEM in this manifest MUST appear in your final HTML. If you write a manifest and then don't include the items, the output fails.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
 ═══ MANDATORY DESIGN SYSTEM — USE EXACTLY (NON-NEGOTIABLE) ═══
 ═══════════════════════════════════════════════════════════════════════════════
 Aesthetic: **${ds.name}**
@@ -1300,22 +1373,40 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
 
-  // Multi-turn generation with auto-continuation if max_tokens is hit
-  const messages = [{ role: "user", content: prompt }];
-  let html = "";
+  // PREFILL: start the assistant turn with the start of a content manifest comment.
+  // This forces the AI to immediately commit to listing concrete services/team/reviews
+  // BEFORE designing the HTML — which makes it impossible to forget the content cards.
+  const PREFILL = "<!--\nCONTENT MANIFEST — items below must all appear in final HTML:\n\nSERVICES (";
+  const CONTINUATION_REQUEST =
+    "Continue the HTML exactly where you stopped. Do NOT repeat any content already written. " +
+    "Do NOT add any preamble, explanation, or markdown. Output only the next characters of the HTML " +
+    "so when concatenated to what you already wrote it forms one valid document ending in </html>.";
+
+  let html = PREFILL;
   let attempts = 0;
-  const MAX_ATTEMPTS = 5;       // safety cap; usually 1-2 calls is enough
-  const PER_CALL_TOKENS = 32000; // Sonnet 4.6 supports up to 64K; 32K is a safe per-call ceiling
+  const MAX_ATTEMPTS = 5;
+  const PER_CALL_TOKENS = 32000;
 
   while (attempts < MAX_ATTEMPTS) {
     attempts++;
-    // Use streaming — required by Anthropic API for requests where
-    // max_tokens could push total time over 10 minutes.
-    // .finalMessage() awaits completion and returns the same shape as create().
+
+    // Build messages fresh each iteration to keep the conversation valid
+    // (no two assistant messages in a row when prefill + continuation coexist).
+    const callMessages = attempts === 1
+      ? [
+          { role: "user", content: prompt },
+          { role: "assistant", content: PREFILL },  // prefill on first call
+        ]
+      : [
+          { role: "user", content: prompt },
+          { role: "assistant", content: html },     // everything generated so far
+          { role: "user", content: CONTINUATION_REQUEST },
+        ];
+
     const stream = ai.messages.stream({
       model: "claude-sonnet-4-6",
       max_tokens: PER_CALL_TOKENS,
-      messages,
+      messages: callMessages,
     });
     const r = await stream.finalMessage();
 
@@ -1324,25 +1415,16 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
 
     console.log(`📦 ${biz.name} chunk ${attempts}: +${chunk.length} chars (stop_reason=${r.stop_reason}, total=${html.length})`);
 
-    // Done when the model finishes naturally
     if (r.stop_reason !== "max_tokens") break;
-
-    // Hit the per-call cap — ask Claude to continue from the exact cutoff
-    messages.push({ role: "assistant", content: chunk });
-    messages.push({
-      role: "user",
-      content:
-        "Continue the HTML exactly where you stopped. Do NOT repeat any content already written. " +
-        "Do NOT add any preamble, explanation, or markdown. Output only the next characters of the HTML " +
-        "so when concatenated to what you already wrote it forms one valid document ending in </html>.",
-    });
-
-    // Extra safety: if we already have </html> somehow, stop
     if (html.toLowerCase().includes("</html>")) break;
   }
 
   // Strip any accidental markdown fences at the boundaries
   html = html.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+
+  // Strip the leading content manifest HTML comment (we forced the AI to start with it
+  // via prefill, but it's just a structural commitment device — it shouldn't ship).
+  html = html.replace(/^<!--[\s\S]*?-->\s*/i, "");
 
   // Validate structure
   const lc = html.toLowerCase();
