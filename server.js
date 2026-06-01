@@ -1147,6 +1147,75 @@ The mobile experience must be as polished as desktop — NOT a shrunk-down after
 8. CONTACT — split layout: info (phone, address, hours) + visual contact form. --accent on the CTA.
 9. FOOTER — branded, not just links. Include hours, social-ish icons, copyright.
 
+═══════════════════════════════════════════════════════════════════════════════
+═══ COMPLETENESS — EVERY SECTION MUST BE FILLED (CRITICAL) ═══
+═══════════════════════════════════════════════════════════════════════════════
+A section's heading is a PROMISE to the visitor. NEVER leave a promise unfulfilled.
+The most common failure of AI-generated sites is "shell without content" — bold
+headings followed by empty space. THIS IS UNACCEPTABLE.
+
+【C1】If you write "Meet the Team" / "Our Stylists" / "The Hands Behind…" →
+   You MUST follow with 3-6 actual team member cards. Each card has:
+   • Name (extract from reviews if mentioned, or invent realistic names matching the area/culture)
+   • Role/title (e.g. "Master Stylist", "Senior Barber", "Color Specialist")
+   • 1-2 sentence bio
+   • Avatar: if no photo, use INITIALS in a gradient circle (background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, var(--ink))))
+   NEVER write "Meet the Team" then leave the section visually empty below.
+
+【C2】If you write "Reviews" / "Testimonials" / "Real Clients" / "What People Say" →
+   You MUST include 3-6 visible review cards with FULL review text shown.
+   Use the provided Google reviews verbatim. If none provided, invent 3-4 realistic
+   testimonials based on the category and description. Each card needs:
+   • Quote text (40-200 chars visible)
+   • Author name
+   • Star rating (5 stars visual)
+
+【C3】If you write "Our Services" / "What We Do" / "Services" →
+   You MUST list 4-6 services. Each service:
+   • Name (specific to category — e.g. for a barbershop: "Precision Fade", "Beard Sculpt", "Hot Towel Shave", "Hair Color")
+   • 1-2 sentence description
+   • Icon or visual element
+
+【C4】If you write "Our Story" / "About Us" / any About section →
+   The TEXT must fill its column appropriately — don't make a narrow text column
+   sit in a viewport with vast empty whitespace on the other side. Either:
+   (a) full-width text with comfortable max-width 70ch, OR
+   (b) two-column with TEXT on one side and an IMAGE/visual on the other side
+   NEVER leave 60% of the viewport empty next to your story text.
+
+【C5】NEVER leave entire viewport-height sections empty or as solid color blocks.
+   If a section exists in your HTML, it must have visible CONTENT inside it.
+   No section should render as just a colored rectangle.
+
+【C6】TEXT WRAPPING for headlines (prevents "Every" → "Ever" + "y"):
+   ALL display headlines MUST use:
+   text-wrap: balance;
+   overflow-wrap: normal;
+   word-break: normal;
+   hyphens: none;
+   Single words must NEVER break mid-character. If a word doesn't fit, reduce
+   font-size (lower the upper clamp() bound) rather than letting words break.
+
+【C7】MARQUEE overflow (prevents text bleeding off-screen):
+   Marquee CONTAINER: overflow: hidden; width: 100%; max-width: 100vw;
+   Marquee CONTENT: white-space: nowrap; display: inline-flex; animation: marquee linear infinite;
+   NEVER allow horizontal scroll on the page body.
+
+【C8】MOBILE HERO IMAGE (critical — your last site failed this):
+   The hero photo MUST be visible on mobile (≤768px). RULES:
+   • DO NOT use display:none on the hero image at any breakpoint
+   • If desktop hero is a side-by-side split, MOBILE STACKS: text on top, image full-width below (or vice versa). Image stays VISIBLE.
+   • Hero image on mobile: width: 100%; aspect-ratio: 4/5; max-height: 70vh; object-fit: cover;
+   • If hero uses background-image on a wrapper, ensure the wrapper has explicit min-height on mobile (e.g. min-height: 50vh)
+   ALWAYS verify: at 375px width, is the hero image VISIBLE? If no, fix the layout.
+
+【C9】SECTION SPACING — never leave huge empty space:
+   • Section padding: clamp(60px, 8vw, 120px) vertical, clamp(20px, 4vw, 80px) horizontal
+   • Content max-width inside a section: 1280px max (most), 70ch for text columns
+   • If a column on desktop is narrow, the OTHER column must have actual content (image, illustration, callout) — never let one column hold real content while the other is empty space
+
+═══════════════════════════════════════════════════════════════════════════════
+
 ═══ TECHNICAL REQUIREMENTS ═══
 • Single self-contained HTML file. ALL CSS inline in <style>. ALL JS inline in <script>.
 • Mobile-first responsive — TEST mentally at 375×667 (iPhone SE) first, then 414×896, then 768, 1280. All MOBILE EXCELLENCE rules above are mandatory.
@@ -1191,11 +1260,41 @@ The mobile experience must be as polished as desktop — NOT a shrunk-down after
    ✗ Hard scroll behavior when Lenis is available (always init Lenis at top of script)
    ✗ Building hero with only HTML/CSS when one of the SHOCK HERO options should be used
 
+✗ COMPLETENESS FAILS — these are unacceptable and will cause rejection:
+   ✗ A "Meet the Team" heading with no team cards visible below it
+   ✗ A "Reviews" / "Testimonials" heading with no review cards visible below it
+   ✗ A "Services" heading with no service cards visible below it
+   ✗ An empty viewport-height section (just a colored background, no content)
+   ✗ A narrow text column with vast empty whitespace beside it (no image, no callout)
+   ✗ Words breaking mid-character ("Every" rendering as "Ever\ny")
+   ✗ Marquee text bleeding off the side of the page (causing horizontal scroll)
+   ✗ Hero image hidden on mobile (display:none at small breakpoints)
+   ✗ Section that "looks designed" but contains only headings without supporting content
+
 ═══ COPY VOICE — match this business ═══
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
 Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after.
+
+═══ SELF-CHECK BEFORE OUTPUTTING ═══
+Mentally walk through your HTML and verify EACH of these is true. If any fail, fix before outputting:
+
+□ Every section heading has visible content below it (no empty "Meet the Team" or "Reviews" sections)
+□ Hero image is visible on mobile (no display:none at small breakpoints)
+□ No words break mid-character anywhere (text-wrap: balance on all headlines)
+□ No section is just an empty colored rectangle
+□ Marquees have overflow:hidden on their container
+□ All 4-6 service cards / team cards / review cards are present and filled with text
+□ Body has overflow-x:hidden as a safety net
+□ Mobile hamburger menu actually opens (JS wired up)
+□ Sticky mobile CTA bar present (Call + Directions buttons)
+□ Hero text fits at 375px (no overflow)
+□ Every photo URL provided is used SOMEWHERE in the site (gallery, hero, about, etc.)
+□ Lenis smooth scroll initialized at script start
+□ GSAP ScrollTrigger.registerPlugin called
+
+If ANY of these fails — fix it. Do not output a site with empty sections.
 
 Build the entire site within the **${ds.name}** design system using GSAP + Lenis (mandatory) and Three.js (encouraged for the SHOCK hero). Show real ambition — typical output is 35,000-55,000 characters of carefully crafted code. Make this site WIN.`;
 
