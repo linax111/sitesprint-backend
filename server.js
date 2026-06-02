@@ -880,21 +880,61 @@ PRIORITY 1 (MANDATORY — if missing, the output is REJECTED):
    ▸ Gallery uses ALL provided photos
    ▸ Hero image visible on mobile
    ▸ Sticky bottom CTA bar on mobile
+   ▸ Nav/menu text MUST be readable against its background (contrast check — see Contrast Rules below)
+   ▸ Any badge/overlay positioned on an image MUST fully fit inside its container (no clipping)
 
-PRIORITY 2 (HIGHLY DESIRED):
+PRIORITY 2 (MANDATORY for premium feel):
    ▸ Beautiful design system applied (palette, fonts, mood)
    ▸ GSAP scroll animations on key elements
    ▸ Lenis smooth scroll
+   ▸ ONE Three.js hero "shock" moment (KEEP UNDER 80 LINES of JS — use a simple particle field or animated gradient mesh, not a complex scene)
    ▸ Mobile swipe carousel for gallery
    ▸ Hamburger menu for mobile nav
 
 PRIORITY 3 (NICE TO HAVE — drop these if running tight):
-   ▸ Three.js WebGL hero (skip if it eats your output budget)
-   ▸ Complex marquee animations
    ▸ Lottie animations
    ▸ Elaborate decorative SVGs
+   ▸ Complex marquee variations beyond a single band
 
-If you find yourself running long on the hero/animations and worry about completing all content cards: DROP the Three.js scene, use a simpler CSS+GSAP hero instead, and use the saved tokens to COMPLETE all content sections. An incomplete site is worse than a less-flashy complete site.
+THREE.JS BUDGET RULE: Keep the entire Three.js scene under 80 lines / 4KB of code. A simple particle field with 300 dots IS the shock factor — don't over-engineer. If you find yourself writing 200+ lines of Three.js, simplify down to particles or skip and use an SVG-based animated background instead.
+
+═══════════════════════════════════════════════════════════════════════════════
+═══ 🎨 CONTRAST RULES (the most common visual bug — DO NOT make this mistake) ═══
+═══════════════════════════════════════════════════════════════════════════════
+NAV / HEADER TEXT must always be readable against its background:
+
+   ▸ If the nav sits OVER a dark hero (dark image, dark overlay, dark gradient):
+     → nav text color MUST be light (#fff, --bg if light, or rgba(255,255,255,.9))
+     → NEVER use --ink (which is dark) for nav text on a dark hero
+   
+   ▸ If the nav sits over a LIGHT background:
+     → nav text uses --ink (dark)
+   
+   ▸ BEST PRACTICE: scroll-aware nav
+     • Initial state: transparent background, light text (over dark hero)
+     • After scrolling past hero (e.g., scrollY > 80): solid background (--bg or backdrop-filter: blur), --ink text
+     • Add JS: window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 80))
+   
+   ▸ ABSOLUTE MINIMUM: If you don't do scroll-aware, FORCE light text on a dark hero. Test mentally: "Can I read the menu items right now?"
+
+HERO BACKGROUND TREATMENT:
+   ▸ If hero uses a photo as background, ALWAYS add a dark gradient overlay so text on top is readable:
+     background-image: linear-gradient(135deg, rgba(0,0,0,.55), rgba(0,0,0,.3)), url(photo);
+   ▸ Hero TEXT on dark background: white / very light
+   ▸ Hero TEXT on light background: dark / --ink
+
+═══════════════════════════════════════════════════════════════════════════════
+═══ 🖼️ OVERLAY/BADGE POSITIONING (don't cut things off) ═══
+═══════════════════════════════════════════════════════════════════════════════
+Floating review badges, stat callouts, rating chips, or any decorative overlay placed on top of an image:
+
+   ▸ MUST fit fully inside the parent — never clipped at edges
+   ▸ Safe pattern: position: absolute; bottom: 16px; right: 16px; (positive inset)
+   ▸ DANGER pattern: bottom: -20px; right: -20px; (negative inset that requires parent to NOT have overflow:hidden — easy to break)
+   ▸ If you want a badge to "float outside" the image edge: parent must have overflow: visible AND enough margin around it to fit the badge
+   ▸ The badge should never be cut off — test mentally: "If I screenshot this section, is the entire badge visible?"
+
+═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 ═══ 📋 CONTENT MANIFEST — START YOUR OUTPUT WITH THIS (NON-NEGOTIABLE) ═══
@@ -1348,6 +1388,13 @@ headings followed by empty space. THIS IS UNACCEPTABLE.
    ✗ Hero image hidden on mobile (display:none at small breakpoints)
    ✗ Section that "looks designed" but contains only headings without supporting content
 
+✗ CONTRAST/CLIPPING FAILS — these break the visual quality:
+   ✗ Dark nav text on a dark hero (invisible menu items)
+   ✗ Hero photo as background WITHOUT a dark gradient overlay (text unreadable on top)
+   ✗ Review/stat/rating badge cut off at the bottom or edge of its parent (clipped)
+   ✗ Absolutely-positioned overlay with negative inset when parent has overflow:hidden
+   ✗ Skipping the Three.js hero entirely (use a SIMPLE one, under 80 lines — don't skip)
+
 ═══ COPY VOICE — match this business ═══
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
@@ -1359,6 +1406,9 @@ Mentally walk through your HTML and verify EACH of these is true. If any fail, f
 
 □ Every section heading has visible content below it (no empty "Meet the Team" or "Reviews" sections)
 □ Hero image is visible on mobile (no display:none at small breakpoints)
+□ Nav text is readable against its background (light text on dark hero, dark text on light bg)
+□ Any badge/overlay on an image fits fully inside its parent (no clipping at edges)
+□ Hero photo background has a dark gradient overlay so text is readable
 □ No words break mid-character anywhere (text-wrap: balance on all headlines)
 □ No section is just an empty colored rectangle
 □ Marquees have overflow:hidden on their container
@@ -1370,8 +1420,9 @@ Mentally walk through your HTML and verify EACH of these is true. If any fail, f
 □ Every photo URL provided is used SOMEWHERE in the site (gallery, hero, about, etc.)
 □ Lenis smooth scroll initialized at script start
 □ GSAP ScrollTrigger.registerPlugin called
+□ Three.js hero shock moment is present (simple particles or animated gradient, <80 lines)
 
-If ANY of these fails — fix it. Do not output a site with empty sections.
+If ANY of these fails — fix it. Do not output a site with empty sections or invisible nav text.
 
 Build the entire site within the **${ds.name}** design system using GSAP + Lenis (mandatory) and Three.js (encouraged for the SHOCK hero). Show real ambition — typical output is 35,000-55,000 characters of carefully crafted code. Make this site WIN.`;
 
