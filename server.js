@@ -897,12 +897,16 @@ PRIORITY 3 (NICE TO HAVE — drop these if running tight):
 If you find yourself running long on the hero/animations and worry about completing all content cards: DROP the Three.js scene, use a simpler CSS+GSAP hero instead, and use the saved tokens to COMPLETE all content sections. An incomplete site is worse than a less-flashy complete site.
 
 ═══════════════════════════════════════════════════════════════════════════════
-═══ 📋 CONTENT MANIFEST — OUTPUT THIS FIRST AS AN HTML COMMENT ═══
+═══ 📋 CONTENT MANIFEST — START YOUR OUTPUT WITH THIS (NON-NEGOTIABLE) ═══
 ═══════════════════════════════════════════════════════════════════════════════
-Before <!DOCTYPE html>, output a content manifest as an HTML comment. This commits you to producing this content. Example:
+The VERY FIRST characters of your output must be an HTML comment listing the concrete content you commit to including. Start with literally: <!--
+
+Then list your content commitments. Then close the comment with -->. Then on the next line start with <!DOCTYPE html>. NO preamble, NO markdown fence, NO commentary outside the comment.
+
+The exact format (FOLLOW THIS STRUCTURE — replace the example items with content for ${biz.name}):
 
 <!--
-CONTENT MANIFEST — must be present in final HTML:
+CONTENT MANIFEST — all items below MUST appear in the final HTML:
 
 SERVICES (5):
 1. Precision Haircut — $25 — Classic cut with consultation
@@ -912,30 +916,30 @@ SERVICES (5):
 5. Hair Treatment — $35 — Deep conditioning
 
 TEAM (5):
-1. Bella — Owner / Senior Stylist — 5+ years
-2. Maria — Color Specialist — Mentioned in 3 reviews
-3. Snow — Barber — Customer favorite
-4. Fran — Stylist — From description
-5. Denia — Stylist — From description
+1. [name extracted from reviews or invented for category] — [role] — [bio line]
+2. [name] — [role] — [bio line]
+... (4-6 members total)
 
-REVIEWS (4):
-1. Maria H — "Best place in town to get your hair done..."
-2. Leonardo R — "I've been going to her for the past 5 years..."
-3. [from Google reviews provided above]
-4. [from Google reviews provided above]
+REVIEWS (3-5):
+1. [Author Name] — [first 80 chars of quote]
+2. [Author Name] — [first 80 chars of quote]
+... (use the verbatim Google reviews provided above)
 
-CONTACT FORM:
-- Name (text input)
-- Phone (tel input)
-- Service interested in (select dropdown of services above)
+CONTACT FORM FIELDS:
+- Name (text input, required)
+- Phone (tel input, required)
+- Service interested in (select dropdown listing the 5 services above)
 - Preferred date (date input)
 - Message (textarea)
-- Submit button (styled with --accent)
+- Submit button (uses --accent color)
 -->
 <!DOCTYPE html>
-<html>...
+<html lang="en">
+...
 
-EVERY ITEM in this manifest MUST appear in your final HTML. If you write a manifest and then don't include the items, the output fails.
+⛔ If you skip the manifest comment, your output will be rejected.
+⛔ If you write the manifest but then don't include the listed items in the HTML, your output will be rejected.
+⛔ This manifest is your COMMITMENT — fulfill every item.
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1348,7 +1352,7 @@ headings followed by empty space. THIS IS UNACCEPTABLE.
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
-Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after.
+Your output must begin with the CONTENT MANIFEST comment (<!-- ... -->), immediately followed by <!DOCTYPE html> and the complete HTML document ending with </html>. NO markdown code fences. NO commentary outside the manifest comment.
 
 ═══ SELF-CHECK BEFORE OUTPUTTING ═══
 Mentally walk through your HTML and verify EACH of these is true. If any fail, fix before outputting:
@@ -1373,16 +1377,15 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
 
   console.log(`🤖 Calling Claude for: ${biz.name}`);
 
-  // PREFILL: start the assistant turn with the start of a content manifest comment.
-  // This forces the AI to immediately commit to listing concrete services/team/reviews
-  // BEFORE designing the HTML — which makes it impossible to forget the content cards.
-  const PREFILL = "<!--\nCONTENT MANIFEST — items below must all appear in final HTML:\n\nSERVICES (";
+  // NOTE: Sonnet 4.6 doesn't support assistant message prefill, so we rely on the
+  // prompt's CONTENT MANIFEST section to make the AI commit to listing content
+  // before designing. The post-processor strips any leading HTML comment.
   const CONTINUATION_REQUEST =
     "Continue the HTML exactly where you stopped. Do NOT repeat any content already written. " +
     "Do NOT add any preamble, explanation, or markdown. Output only the next characters of the HTML " +
     "so when concatenated to what you already wrote it forms one valid document ending in </html>.";
 
-  let html = PREFILL;
+  let html = "";
   let attempts = 0;
   const MAX_ATTEMPTS = 5;
   const PER_CALL_TOKENS = 32000;
@@ -1390,16 +1393,12 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
   while (attempts < MAX_ATTEMPTS) {
     attempts++;
 
-    // Build messages fresh each iteration to keep the conversation valid
-    // (no two assistant messages in a row when prefill + continuation coexist).
+    // Build messages fresh each iteration so continuation conversations stay valid.
     const callMessages = attempts === 1
-      ? [
-          { role: "user", content: prompt },
-          { role: "assistant", content: PREFILL },  // prefill on first call
-        ]
+      ? [{ role: "user", content: prompt }]
       : [
           { role: "user", content: prompt },
-          { role: "assistant", content: html },     // everything generated so far
+          { role: "assistant", content: html },
           { role: "user", content: CONTINUATION_REQUEST },
         ];
 
