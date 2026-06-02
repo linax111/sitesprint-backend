@@ -903,6 +903,80 @@ Output the raw JSON object ONLY. No surrounding text.`;
   return plan;
 }
 
+// Build ready-to-paste HTML snippets from the content plan.
+// The Stage 2 AI must include these snippets — they're not optional data, they're literal HTML.
+// This is the single most reliable way to ensure content cards never get skipped.
+function htmlEscape(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function initialsOf(name) {
+  return String(name || "X")
+    .split(/\s+/).map(p => p[0] || "").join("").slice(0, 2).toUpperCase();
+}
+function buildContentSnippets(plan) {
+  const services = (plan.services || []).map((s, i) => {
+    return `<article class="service-card" data-service-i="${i}">
+  <h3 class="service-name">${htmlEscape(s.name)}</h3>
+  <div class="service-price">${htmlEscape(s.price || "")}</div>
+  <p class="service-description">${htmlEscape(s.description || "")}</p>
+</article>`;
+  }).join("\n");
+
+  const team = (plan.team || []).map((m, i) => {
+    return `<article class="team-card" data-team-i="${i}">
+  <div class="team-avatar" aria-hidden="true">${htmlEscape(initialsOf(m.name))}</div>
+  <h3 class="team-name">${htmlEscape(m.name)}</h3>
+  <div class="team-role">${htmlEscape(m.role || "")}</div>
+  <p class="team-bio">${htmlEscape(m.bio || "")}</p>${m.specialty ? `
+  <div class="team-specialty">Specialty: ${htmlEscape(m.specialty)}</div>` : ""}
+</article>`;
+  }).join("\n");
+
+  const reviews = (plan.reviews || []).map((r, i) => {
+    return `<article class="review-card" data-review-i="${i}">
+  <div class="review-stars" aria-label="${r.stars || 5} stars">${"★".repeat(r.stars || 5)}</div>
+  <blockquote class="review-text">${htmlEscape(r.text)}</blockquote>
+  <cite class="review-author">— ${htmlEscape(r.author)}</cite>
+</article>`;
+  }).join("\n");
+
+  const stats = (plan.stats || []).map((s) => {
+    return `<div class="stat-item">
+  <div class="stat-value">${htmlEscape(s.value)}</div>
+  <div class="stat-label">${htmlEscape(s.label)}</div>
+</div>`;
+  }).join("\n");
+
+  const formFields = (plan.contact_form_fields || []).map(f => {
+    if (f.type === "select") {
+      const opts = (f.options || []).map(o => `    <option>${htmlEscape(o)}</option>`).join("\n");
+      return `<div class="form-field">
+  <label for="${f.name}">${htmlEscape(f.label)}</label>
+  <select id="${f.name}" name="${f.name}"${f.required ? " required" : ""}>
+    <option value="">Choose...</option>
+${opts}
+  </select>
+</div>`;
+    }
+    if (f.type === "textarea") {
+      return `<div class="form-field">
+  <label for="${f.name}">${htmlEscape(f.label)}</label>
+  <textarea id="${f.name}" name="${f.name}" rows="4"${f.required ? " required" : ""}></textarea>
+</div>`;
+    }
+    return `<div class="form-field">
+  <label for="${f.name}">${htmlEscape(f.label)}</label>
+  <input type="${f.type || "text"}" id="${f.name}" name="${f.name}"${f.required ? " required" : ""}>
+</div>`;
+  }).join("\n");
+
+  const trustBadges = (plan.trust_badges || []).map(b => htmlEscape(b)).join(" ★ ");
+
+  return { services, team, reviews, stats, formFields, trustBadges };
+}
+
 // ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
 async function generateUniqueHTML(biz) {
   // Pre-download all photos to DB cache. This:
@@ -930,6 +1004,11 @@ async function generateUniqueHTML(biz) {
     : "(no Google photos — use only solid colors / gradients, no broken images)";
 
   const hoursBlock = biz.hours?.length ? biz.hours.join(" | ") : "Hours not listed";
+
+  // Build ready-to-paste HTML snippets from the content plan.
+  // The Stage 2 AI MUST include these — they are the source of truth for content,
+  // not optional reference data.
+  const snippets = buildContentSnippets(contentPlan);
 
   // Detect manual-entry businesses (no Google reviews/rating)
   const isManual = !biz.review_count && !biz.rating;
@@ -1047,26 +1126,50 @@ Floating review badges, stat callouts, rating chips, or any decorative overlay p
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
-═══ 📋 CONTENT PLAN (pre-written by the content team — render this VERBATIM) ═══
+═══ 📋 READY-TO-PASTE CONTENT (these snippets MUST appear in your HTML) ═══
 ═══════════════════════════════════════════════════════════════════════════════
-The JSON below is the source of truth for ALL section content. Your job is to design and lay it out beautifully — NOT to invent new content or skip items. Every service, team member, review, stat, form field, and trust badge below MUST appear in your final HTML.
+The HTML snippets below are PRE-RENDERED. You MUST include every single one in your HTML.
+You can:
+   • Restyle them freely (any CSS, animations, hover states)
+   • Add wrapper containers around them
+   • Modify class names if needed
+   • Add extra decorative elements
+You CANNOT:
+   • Skip any of them
+   • Reduce the number of cards
+   • Remove the content text (names, prices, descriptions, quotes, authors must appear)
+   • Replace with placeholders or "lorem ipsum"
 
-${JSON.stringify(contentPlan, null, 2)}
+─── HERO CONTENT (use in your hero) ───
+Tagline: ${JSON.stringify(contentPlan.tagline || "")}
+Subhead: ${JSON.stringify(contentPlan.subhead || "")}
+Primary CTA button text: ${JSON.stringify(contentPlan.cta_primary || "Book Now")}
+Secondary CTA button text: ${JSON.stringify(contentPlan.cta_secondary || "Get Directions")}
 
-HOW TO USE THE CONTENT PLAN:
-• tagline / subhead → in the hero
-• about_paragraphs → in the about/story section
-• services array → render EACH as a service card (${contentPlan.services?.length || 5} cards visible, with name + price + description)
-• team array → render EACH as a team member card with name, role, bio. For avatars: use the first 1-2 initials in a circle with background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, var(--ink)))
-• reviews array → render EACH as a review card with quote, author name, 5 stars (use Font Awesome stars or SVG)
-• stats array → render as a stats row/band somewhere prominent (each stat: big value + small label)
-• trust_badges → use as marquee items in a trust band (with • or ★ separators)
-• contact_form_fields → render the form with these EXACT fields (input types as specified; for select, render the options)
-• cta_primary / cta_secondary → use as button labels
+─── ABOUT PARAGRAPHS (use in the about/story section) ───
+${(contentPlan.about_paragraphs || []).map((p, i) => `Paragraph ${i+1}: ${JSON.stringify(p)}`).join("\n")}
 
-⛔ If you skip ANY item from the plan, your output will be rejected.
-⛔ Don't invent additional services/team/reviews — render exactly what's in the plan.
-⛔ Don't shorten — use the full descriptions, bios, and quotes provided.
+─── TRUST MARQUEE BAND (use as scrolling text in a marquee somewhere prominent) ───
+${snippets.trustBadges}
+
+─── STATS BAND (paste ALL ${contentPlan.stats?.length || 0} into a stats row/band) ───
+${snippets.stats}
+
+─── SERVICES CARDS (paste ALL ${contentPlan.services?.length || 0} into your services section) ───
+${snippets.services}
+
+─── TEAM CARDS (paste ALL ${contentPlan.team?.length || 0} into your team section) ───
+${snippets.team}
+
+─── REVIEW CARDS (paste ALL ${contentPlan.reviews?.length || 0} into your reviews section) ───
+${snippets.reviews}
+
+─── CONTACT FORM FIELDS (paste ALL ${contentPlan.contact_form_fields?.length || 0} into your contact form) ───
+${snippets.formFields}
+
+⛔ If you skip any of the cards above, your output will be rejected and you must redo this work.
+⛔ If you build a section heading (e.g. "Our Services") and then DON'T include the matching cards, your output will be rejected.
+⛔ The cards above are CONTENT — restyling is fine, deleting is not.
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1632,6 +1735,23 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
   // Safety net: replace any /photo?ref=X URL that isn't in our validated set
   // (covers cases where Claude reuses a ref imprecisely or a photo later 403s)
   html = bulletproofImages(html, validPhotos);
+
+  // CONTENT PRESENCE VALIDATION — verify Stage 2 actually rendered the content plan.
+  // We check that names from services/team/reviews appear somewhere in the HTML.
+  // If many are missing, log a clear warning so we know completeness failed.
+  const required = [
+    ...(contentPlan.services || []).map(s => s.name).filter(Boolean),
+    ...(contentPlan.team || []).map(m => m.name).filter(Boolean),
+    ...(contentPlan.reviews || []).map(r => r.author).filter(Boolean),
+  ];
+  const missing = required.filter(name => !html.includes(name));
+  const pctMissing = required.length ? Math.round(100 * missing.length / required.length) : 0;
+  if (missing.length > 0) {
+    console.warn(`⚠️ ${biz.name}: ${missing.length}/${required.length} (${pctMissing}%) required strings missing from HTML`);
+    console.warn(`   Missing: ${missing.slice(0, 6).join(" | ")}${missing.length > 6 ? " ..." : ""}`);
+  } else {
+    console.log(`✅ ${biz.name}: all ${required.length} required content strings present in HTML`);
+  }
 
   console.log(`✅ ${biz.name}: HTML done — ${html.length} chars, ${attempts} call(s)`);
   return html;
