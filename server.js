@@ -446,11 +446,15 @@ function addEditMarkers(html) {
     }
   );
 
-  // Spans inside that contain only text (often used for inline emphasis)
+  // Spans inside that contain only text (often used for inline emphasis).
+  // Skip spans that look like they might be split-text targets (e.g. .char .word .split)
+  // to avoid the AI's split-animation JS mangling our data-edit-id attributes.
+  const SPLIT_HINT_RE = /class\s*=\s*["'][^"']*\b(?:char|word|split|letter|reveal|gsap-split|hero-title)\b/i;
   html = html.replace(
     /<(span|strong|em|a)(\s[^>]*?)?>([^<]{3,200})<\/\1>/gi,
     (match, tag, attrs = "", text) => {
       if (attrs.includes("data-edit-id")) return match;
+      if (SPLIT_HINT_RE.test(attrs)) return match;  // don't tag elements likely to get JS-split
       const trimmed = text.trim();
       if (!trimmed || trimmed.length < 3) return match;
       if (/^[\d\s.,$%★]+$/.test(trimmed)) return match;
@@ -1167,10 +1171,41 @@ Include them and USE them — don't just load them and use vanilla CSS.
    Required pattern at the top of your script:
    gsap.registerPlugin(ScrollTrigger);
 
-   Example hero reveal:
-   const splitTitle = document.querySelector('.hero-title').textContent.split('');
-   document.querySelector('.hero-title').innerHTML = splitTitle.map(c => '<span class="char">' + c + '</span>').join('');
-   gsap.from('.hero-title .char', { y: 100, opacity: 0, duration: 1, stagger: 0.03, ease: 'power4.out' });
+   ⚠️⚠️ CRITICAL — TEXT SPLIT ANIMATIONS — READ CAREFULLY:
+   The post-processor adds data-edit-id attributes to your spans. If you try to split
+   a heading using .innerHTML, you WILL mangle those attributes and they will show up
+   as visible text on the page (e.g. 'class="accent-word" data-edit-id="text-55">Cut').
+   
+   FORBIDDEN PATTERNS (these BREAK the page):
+   ✗ el.innerHTML.split('').map(c => '<span>'+c+'</span>')   ← splits inside tag attributes
+   ✗ el.innerHTML.split(' ').map(w => '<span>'+w+'</span>')  ← same problem with words
+   ✗ ANY use of .innerHTML for splitting when the element contains nested <span>
+   
+   SAFE PATTERNS (use one of these):
+   
+   PATTERN A — char-split a SIMPLE heading (no nested spans):
+   const el = document.querySelector('.hero-title');
+   const text = el.textContent;
+   el.textContent = '';
+   for (const c of text) {
+     const span = document.createElement('span');
+     span.className = 'char';
+     span.textContent = c === ' ' ? '\\u00A0' : c;
+     el.appendChild(span);
+   }
+   gsap.from('.hero-title .char', { y:100, opacity:0, duration:1, stagger:0.03, ease:'power4.out' });
+   
+   PATTERN B — accent words WITH split: split each part separately
+   HTML: <h1 class="hero-title"><span class="part">Where Every</span> <span class="accent-word part">Cut</span> <span class="part">Tells Your</span> <span class="stroke-word part">Story</span></h1>
+   JS: split each .part using textContent (PATTERN A logic), keeping the outer accent span intact
+   
+   PATTERN C — simplest: NO char split, just word/line reveal via CSS
+   HTML: heading with nested <span class="accent-word"> as needed
+   CSS: .hero-title { opacity: 0; }
+   JS: gsap.from('.hero-title', { y:60, opacity:0, duration:1.2, ease:'power3.out' });
+        gsap.from('.hero-subhead', { y:30, opacity:0, duration:1, delay:0.3 });
+   
+   When in doubt, USE PATTERN C — it always works.
 
    Example parallax:
    gsap.to('.parallax-img', { yPercent: -20, ease: 'none', scrollTrigger: { trigger: '.section', start: 'top bottom', end: 'bottom top', scrub: 1 } });
