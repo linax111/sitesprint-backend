@@ -801,6 +801,104 @@ function pickDesignSystem(seed) {
   return DESIGN_SYSTEMS[Math.abs(hash) % DESIGN_SYSTEMS.length];
 }
 
+// ─── AI: STAGE 1 — CONTENT PLAN (cheap, focused JSON output) ─────────────────
+// Generates a structured content plan that the HTML stage MUST use verbatim.
+// This eliminates the "AI builds beautiful empty sections" failure mode:
+// content is no longer optional — it's already written when the HTML stage starts.
+async function generateContentPlan(biz) {
+  const isManual = !biz.review_count && !biz.rating;
+  const reviewsList = (biz.reviews || [])
+    .filter(r => Number(r.rating) === 5)
+    .slice(0, 6)
+    .map(r => `${r.name}: "${(r.text || "").slice(0, 240)}"`)
+    .join("\n");
+
+  const prompt = `You are a senior content strategist for a top web agency. For the local business below, produce a JSON content plan that the design team will turn into a flagship website. Be specific, realistic, and on-brand for the category.
+
+═══ BUSINESS ═══
+Name: ${biz.name}
+Category: ${biz.category}
+Address: ${biz.address || "(none)"}
+Phone: ${biz.phone || "(none)"}
+Hours: ${biz.hours?.length ? biz.hours.join(" | ") : "(not listed)"}
+Description: ${biz.description || "(none)"}
+${isManual ? "Source: MANUAL ENTRY — no Google reviews available, generate plausible content from the description and category." : `Source: Google Places (rating ${biz.rating}★, ${biz.review_count} reviews)`}
+
+═══ AVAILABLE GOOGLE REVIEWS (use verbatim where possible) ═══
+${reviewsList || "(none — invent 3-4 realistic ones based on category)"}
+
+═══ TASK ═══
+Output ONLY a JSON object — no markdown, no preamble, no \`\`\` fences. Just the raw JSON. Structure:
+
+{
+  "tagline": "8-12 word headline that captures the brand essence",
+  "subhead": "1-2 sentence supporting line that goes under the tagline",
+  "about_paragraphs": ["paragraph 1 (~50 words)", "paragraph 2 (~50 words)"],
+  "services": [
+    {"name": "Service name (concise)", "price": "$XX or 'From $XX' or 'Quote'", "description": "1-2 sentence description"},
+    ... (EXACTLY 5 services, category-appropriate, realistic pricing)
+  ],
+  "team": [
+    {"name": "First name", "role": "Title like Senior Stylist / Master Barber / Owner", "bio": "1-2 sentence bio", "specialty": "what they're known for"},
+    ... (EXACTLY 4-5 team members; extract names from reviews if any are mentioned by customers, otherwise invent realistic names matching the area/business type)
+  ],
+  "reviews": [
+    {"author": "Customer name", "stars": 5, "text": "Quote (40-200 chars)"},
+    ... (3-5 reviews; use VERBATIM Google reviews provided above where possible; if none, invent realistic ones)
+  ],
+  "stats": [
+    {"value": "4.8★", "label": "Google Rating"},
+    {"value": "27", "label": "5-Star Reviews"},
+    {"value": "5+", "label": "Years Trusted"},
+    {"value": "X", "label": "..."}
+  ],
+  "trust_badges": ["short trust signal 1", "short trust signal 2", "..."] (6-10 items for the marquee band),
+  "contact_form_fields": [
+    {"name": "name", "label": "Your Name", "type": "text", "required": true},
+    {"name": "phone", "label": "Phone", "type": "tel", "required": true},
+    {"name": "service", "label": "Service Interested In", "type": "select", "options": ["...service names..."]},
+    {"name": "preferred_date", "label": "Preferred Date", "type": "date"},
+    {"name": "message", "label": "Message", "type": "textarea"}
+  ],
+  "cta_primary": "Book Now / Call Today / Reserve Your Spot — pick the most natural for this category",
+  "cta_secondary": "Get Directions / Learn More / View Menu — secondary action"
+}
+
+Output the raw JSON object ONLY. No surrounding text.`;
+
+  console.log(`📝 Stage 1: generating content plan for ${biz.name}`);
+
+  const stream = ai.messages.stream({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4000,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const r = await stream.finalMessage();
+  let raw = (r.content[0]?.text || "").trim();
+
+  // Strip any accidental markdown fences
+  raw = raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+
+  // Find the JSON object boundaries (defensive)
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    raw = raw.slice(firstBrace, lastBrace + 1);
+  }
+
+  let plan;
+  try {
+    plan = JSON.parse(raw);
+  } catch (e) {
+    console.error(`🔴 Stage 1: JSON parse failed for ${biz.name}:`, e.message);
+    console.error("Raw output:", raw.slice(0, 500));
+    throw new Error("Stage 1 produced invalid JSON: " + e.message);
+  }
+
+  console.log(`✅ Stage 1 done for ${biz.name}: ${plan.services?.length || 0} services, ${plan.team?.length || 0} team, ${plan.reviews?.length || 0} reviews`);
+  return plan;
+}
+
 // ─── AI: UNIQUE SITE GENERATOR ────────────────────────────────────────────────
 async function generateUniqueHTML(biz) {
   // Pre-download all photos to DB cache. This:
@@ -810,6 +908,12 @@ async function generateUniqueHTML(biz) {
   const photos  = validPhotos.slice(0, 10);
   // Only 5-star reviews (per user requirement)
   const reviews = (biz.reviews || []).filter(r => Number(r.rating) === 5).slice(0, 5);
+
+  // STAGE 1: Generate concrete content plan as JSON.
+  // This is the most important architectural decision: by the time Stage 2 runs,
+  // all section content is already written — Stage 2 just designs and lays out.
+  // This eliminates "beautiful empty sections" because content is no longer optional.
+  const contentPlan = await generateContentPlan(biz);
 
   const reviewsBlock = reviews.length
     ? reviews.map((r, i) =>
@@ -872,11 +976,13 @@ ${photosBlock}
 When you can't fit everything, drop items from the BOTTOM of this list, NEVER the top.
 
 PRIORITY 1 (MANDATORY — if missing, the output is REJECTED):
-   ▸ Every section heading has REAL CONTENT below it (no empty sections)
-   ▸ Services section has 4-6 actual service CARDS with names + descriptions + prices
-   ▸ Team section has 3-6 actual team member CARDS with names + roles + bios + avatars
-   ▸ Reviews section has 3-6 actual review CARDS with verbatim quotes + author + 5 stars
-   ▸ Contact section has an actual FORM (name, phone, service select, message textarea) + visible phone/address/hours
+   ▸ EVERY item in the CONTENT PLAN below appears in the final HTML — services, team, reviews, stats, form fields, trust badges
+   ▸ Services section renders ALL ${contentPlan.services?.length || 5} services as visible cards (name, price, description)
+   ▸ Team section renders ALL ${contentPlan.team?.length || 4} team members as visible cards (name, role, bio, initials avatar)
+   ▸ Reviews section renders ALL ${contentPlan.reviews?.length || 3} reviews as visible cards (quote, author, 5 stars)
+   ▸ Contact section renders a form with the EXACT fields from contact_form_fields + visible phone/address/hours
+   ▸ Stats render as a prominent band/row using the values from the plan
+   ▸ Trust badges render in a marquee using the trust_badges array
    ▸ Gallery uses ALL provided photos
    ▸ Hero image visible on mobile
    ▸ Sticky bottom CTA bar on mobile
@@ -937,49 +1043,26 @@ Floating review badges, stat callouts, rating chips, or any decorative overlay p
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
-═══ 📋 CONTENT MANIFEST — START YOUR OUTPUT WITH THIS (NON-NEGOTIABLE) ═══
+═══ 📋 CONTENT PLAN (pre-written by the content team — render this VERBATIM) ═══
 ═══════════════════════════════════════════════════════════════════════════════
-The VERY FIRST characters of your output must be an HTML comment listing the concrete content you commit to including. Start with literally: <!--
+The JSON below is the source of truth for ALL section content. Your job is to design and lay it out beautifully — NOT to invent new content or skip items. Every service, team member, review, stat, form field, and trust badge below MUST appear in your final HTML.
 
-Then list your content commitments. Then close the comment with -->. Then on the next line start with <!DOCTYPE html>. NO preamble, NO markdown fence, NO commentary outside the comment.
+${JSON.stringify(contentPlan, null, 2)}
 
-The exact format (FOLLOW THIS STRUCTURE — replace the example items with content for ${biz.name}):
+HOW TO USE THE CONTENT PLAN:
+• tagline / subhead → in the hero
+• about_paragraphs → in the about/story section
+• services array → render EACH as a service card (${contentPlan.services?.length || 5} cards visible, with name + price + description)
+• team array → render EACH as a team member card with name, role, bio. For avatars: use the first 1-2 initials in a circle with background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, var(--ink)))
+• reviews array → render EACH as a review card with quote, author name, 5 stars (use Font Awesome stars or SVG)
+• stats array → render as a stats row/band somewhere prominent (each stat: big value + small label)
+• trust_badges → use as marquee items in a trust band (with • or ★ separators)
+• contact_form_fields → render the form with these EXACT fields (input types as specified; for select, render the options)
+• cta_primary / cta_secondary → use as button labels
 
-<!--
-CONTENT MANIFEST — all items below MUST appear in the final HTML:
-
-SERVICES (5):
-1. Precision Haircut — $25 — Classic cut with consultation
-2. Beard Trim & Shape — $15 — Hot towel + shaping
-3. Color Treatment — $80+ — Full color, highlights, balayage
-4. Kids Cut — $18 — Ages 12 and under
-5. Hair Treatment — $35 — Deep conditioning
-
-TEAM (5):
-1. [name extracted from reviews or invented for category] — [role] — [bio line]
-2. [name] — [role] — [bio line]
-... (4-6 members total)
-
-REVIEWS (3-5):
-1. [Author Name] — [first 80 chars of quote]
-2. [Author Name] — [first 80 chars of quote]
-... (use the verbatim Google reviews provided above)
-
-CONTACT FORM FIELDS:
-- Name (text input, required)
-- Phone (tel input, required)
-- Service interested in (select dropdown listing the 5 services above)
-- Preferred date (date input)
-- Message (textarea)
-- Submit button (uses --accent color)
--->
-<!DOCTYPE html>
-<html lang="en">
-...
-
-⛔ If you skip the manifest comment, your output will be rejected.
-⛔ If you write the manifest but then don't include the listed items in the HTML, your output will be rejected.
-⛔ This manifest is your COMMITMENT — fulfill every item.
+⛔ If you skip ANY item from the plan, your output will be rejected.
+⛔ Don't invent additional services/team/reviews — render exactly what's in the plan.
+⛔ Don't shorten — use the full descriptions, bios, and quotes provided.
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1419,7 +1502,7 @@ headings followed by empty space. THIS IS UNACCEPTABLE.
 Read the reviews. Match the energy of the actual customers. A salon's voice ≠ an auto shop's voice ≠ a taqueria's voice. Reference the city/neighborhood from the address. Use specifics. Make the copy feel hand-written for THIS business, not template-generated.
 
 ═══ OUTPUT FORMAT ═══
-Your output must begin with the CONTENT MANIFEST comment (<!-- ... -->), immediately followed by <!DOCTYPE html> and the complete HTML document ending with </html>. NO markdown code fences. NO commentary outside the manifest comment.
+Output ONLY the complete HTML document. Start with <!DOCTYPE html> and end with </html>. NO markdown code fences. NO commentary before or after.
 
 ═══ SELF-CHECK BEFORE OUTPUTTING ═══
 Mentally walk through your HTML and verify EACH of these is true. If any fail, fix before outputting:
@@ -1495,10 +1578,6 @@ Build the entire site within the **${ds.name}** design system using GSAP + Lenis
 
   // Strip any accidental markdown fences at the boundaries
   html = html.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-
-  // Strip the leading content manifest HTML comment (we forced the AI to start with it
-  // via prefill, but it's just a structural commitment device — it shouldn't ship).
-  html = html.replace(/^<!--[\s\S]*?-->\s*/i, "");
 
   // Validate structure
   const lc = html.toLowerCase();
