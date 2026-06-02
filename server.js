@@ -1238,18 +1238,34 @@ The mobile experience must be as polished as desktop — NOT a shrunk-down after
    • Padding inside buttons: 14px 22px minimum
    • Spacing between tappable elements: 8px minimum
 
-【M8】MOBILE LAYOUT FIXES
-   • Replace ALL multi-column flex/grid with single column at ≤640px
+【M8】MOBILE LAYOUT — STRICT GRID RULES (most common failure point)
+   • Services / Team / Reviews cards: SINGLE COLUMN at ≤640px. Period.
+     Pattern: @media (max-width: 640px) { .services-grid, .team-grid, .reviews-grid { grid-template-columns: 1fr !important; gap: 16px; } }
+   • NEVER use grid-template-columns: 1fr 1fr (or repeat(2, 1fr)) WITHOUT a media query collapsing it at ≤640px
+   • Use this safe pattern: grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+   • Tablet (641-1024px): max 2 columns
+   • Desktop (≥1025px): 3-4 columns
    • Replace overlapping/negative-margin elements with stacked positive-flow on mobile
    • Remove decorative absolute-positioned elements that would clutter mobile
    • Padding: 16-20px horizontal on mobile (not 80px+)
-   • The site must work AT 320px without horizontal scroll
 
-【M9】PERFORMANCE on mobile
+【M9】HORIZONTAL OVERFLOW PREVENTION (mandatory — must work at 320px)
+   • html, body { overflow-x: hidden; max-width: 100vw; }
+   • Every section: max-width: 100%; box-sizing: border-box;
+   • NEVER use 'width: 100vw' (it includes the scrollbar and overflows — use 'width: 100%' instead)
+   • Three.js canvas: width: 100%; (NOT 100vw)
+   • Marquee containers: overflow: hidden; max-width: 100vw;
+   • Defensive on text containers: overflow-wrap: break-word; word-wrap: break-word;
+   • Hero text: use clamp() — at 375px width the largest size must not overflow
+   • Section padding: padding: clamp(40px, 8vw, 120px) clamp(16px, 4vw, 80px);
+   • Test mentally: at 320px width, is there horizontal scroll? If yes, fix it.
+
+【M10】PERFORMANCE on mobile
    • Lazy-load images below the fold: <img loading="lazy" decoding="async">
    • Use the FIRST photo for hero, smaller photos for cards
    • No autoplay videos
    • Respect prefers-reduced-motion — disable scroll animations for those users
+   • Three.js: lower particle count on mobile (e.g. 150 instead of 400) or disable entirely below 600px width
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1363,9 +1379,13 @@ headings followed by empty space. THIS IS UNACCEPTABLE.
    ✗ Static photo grid on mobile that just stacks vertically with everything tiny
    ✗ display:none on photos at mobile breakpoints (every photo must be visible)
    ✗ Fixed pixel font-sizes (must use clamp())
-   ✗ Multi-column layouts at <640px width
+   ✗ Multi-column layouts at ≤640px (services/team/reviews MUST be single column)
+   ✗ 'grid-template-columns: 1fr 1fr' without a media query collapsing it on mobile
+   ✗ 'width: 100vw' anywhere (overflows because of scrollbar — use 'width: 100%')
+   ✗ Missing 'overflow-x: hidden' on html AND body (causes horizontal scroll on mobile)
+   ✗ A grid card crushed to <100px wide on mobile (single letter per line)
    ✗ Tiny touch targets (<44px)
-   ✗ Horizontal scroll on the whole page (overflow-x:hidden on body if needed)
+   ✗ Horizontal scroll on the whole page
    ✗ Hero text so big it overflows on iPhone SE (375px wide)
    ✗ Desktop nav links shown on mobile (must have hamburger)
    ✗ Forgetting the sticky bottom mobile CTA bar
@@ -1413,7 +1433,11 @@ Mentally walk through your HTML and verify EACH of these is true. If any fail, f
 □ No section is just an empty colored rectangle
 □ Marquees have overflow:hidden on their container
 □ All 4-6 service cards / team cards / review cards are present and filled with text
-□ Body has overflow-x:hidden as a safety net
+□ Services/Team/Reviews grids COLLAPSE TO SINGLE COLUMN at ≤640px (mandatory media query)
+□ html AND body BOTH have overflow-x: hidden
+□ NO 'width: 100vw' anywhere (use 'width: 100%')
+□ At 320px width, no element causes horizontal scroll
+□ No card on mobile is crushed to less than 200px wide
 □ Mobile hamburger menu actually opens (JS wired up)
 □ Sticky mobile CTA bar present (Call + Directions buttons)
 □ Hero text fits at 375px (no overflow)
@@ -1422,7 +1446,7 @@ Mentally walk through your HTML and verify EACH of these is true. If any fail, f
 □ GSAP ScrollTrigger.registerPlugin called
 □ Three.js hero shock moment is present (simple particles or animated gradient, <80 lines)
 
-If ANY of these fails — fix it. Do not output a site with empty sections or invisible nav text.
+If ANY of these fails — fix it. Do not output a site with empty sections, invisible nav text, or mobile horizontal overflow.
 
 Build the entire site within the **${ds.name}** design system using GSAP + Lenis (mandatory) and Three.js (encouraged for the SHOCK hero). Show real ambition — typical output is 35,000-55,000 characters of carefully crafted code. Make this site WIN.`;
 
