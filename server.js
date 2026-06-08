@@ -831,6 +831,21 @@ async function generateContentPlan(biz) {
     .map(r => `${r.name}: "${(r.text || "").slice(0, 240)}"`)
     .join("\n");
 
+  // For manual entries, the user can give us authoritative content directly.
+  // Pull it out so we can construct a prompt section that tells the AI to USE it verbatim.
+  const meta = biz._manual_meta || {};
+  const userServicesBlock = (meta.services || []).length
+    ? meta.services.map(s => `• ${s.name}${s.price ? ` — ${s.price}` : ""}${s.description ? ` — ${s.description}` : ""}`).join("\n")
+    : "";
+
+  const ownerBlock = meta.owner_name
+    ? `Owner / Founder: ${meta.owner_name}${meta.years_in_business ? ` (in business ${meta.years_in_business} years)` : ""}`
+    : (meta.years_in_business ? `Years in business: ${meta.years_in_business}` : "");
+
+  const briefBlock = meta.site_brief
+    ? `\n═══ ⚠️ SITE BRIEF — special instructions from the business owner (FOLLOW THESE CLOSELY) ═══\n${meta.site_brief}\n`
+    : "";
+
   const prompt = `You are a senior content strategist for a top web agency. For the local business below, produce a JSON content plan that the design team will turn into a flagship website. Be specific, realistic, and on-brand for the category.
 
 ═══ BUSINESS ═══
@@ -839,9 +854,10 @@ Category: ${biz.category}
 Address: ${biz.address || "(none)"}
 Phone: ${biz.phone || "(none)"}
 Hours: ${biz.hours?.length ? biz.hours.join(" | ") : "(not listed)"}
-Description: ${biz.description || "(none)"}
+${ownerBlock ? ownerBlock + "\n" : ""}Description: ${biz.description || "(none)"}
 ${isManual ? "Source: MANUAL ENTRY — no Google reviews available, generate plausible content from the description and category." : `Source: Google Places (rating ${biz.rating}★, ${biz.review_count} reviews)`}
-
+${briefBlock}
+${userServicesBlock ? `═══ ⚠️ USER-PROVIDED SERVICES (use these EXACTLY — do not invent, substitute, or omit any) ═══\n${userServicesBlock}\n\nFor the "services" array in your JSON: use these exact names. Keep prices as-given (or "Quote" if not provided). Expand descriptions if they're brief or empty, but never change the service names.\n` : ""}
 ═══ AVAILABLE GOOGLE REVIEWS (use verbatim where possible) ═══
 ${reviewsList || "(none — invent 3-4 realistic ones based on category)"}
 
@@ -854,11 +870,11 @@ Output ONLY a JSON object — no markdown, no preamble, no \`\`\` fences. Just t
   "about_paragraphs": ["paragraph 1 (~50 words)", "paragraph 2 (~50 words)"],
   "services": [
     {"name": "Service name (concise)", "price": "$XX or 'From $XX' or 'Quote'", "description": "1-2 sentence description"},
-    ... (EXACTLY 5 services, category-appropriate, realistic pricing)
+    ... ${userServicesBlock ? `(use the USER-PROVIDED services above — match the count and names EXACTLY)` : `(EXACTLY 5 services, category-appropriate, realistic pricing)`}
   ],
   "team": [
     {"name": "First name", "role": "Title like Senior Stylist / Master Barber / Owner", "bio": "1-2 sentence bio", "specialty": "what they're known for"},
-    ... (EXACTLY 4-5 team members; extract names from reviews if any are mentioned by customers, otherwise invent realistic names matching the area/business type)
+    ... (EXACTLY 4-5 team members; ${meta.owner_name ? `INCLUDE "${meta.owner_name}" as the owner/founder in this list. ` : ""}extract additional names from reviews if any are mentioned by customers, otherwise invent realistic names matching the area/business type)
   ],
   "reviews": [
     {"author": "Customer name", "stars": 5, "text": "Quote (40-200 chars)"},
@@ -1139,7 +1155,16 @@ Floating review badges, stat callouts, rating chips, or any decorative overlay p
 
 ═══════════════════════════════════════════════════════════════════════════════
 
+${biz._manual_meta?.site_brief ? `═══════════════════════════════════════════════════════════════════════════════
+═══ ⚠️ SITE BRIEF FROM THE BUSINESS OWNER (READ FIRST — FOLLOW CLOSELY) ═══
 ═══════════════════════════════════════════════════════════════════════════════
+The business owner gave these specific instructions. They override defaults where they conflict — adjust copy tone, color emphasis, section priorities, and creative direction accordingly:
+
+${biz._manual_meta.site_brief}
+
+═══════════════════════════════════════════════════════════════════════════════
+
+` : ""}═══════════════════════════════════════════════════════════════════════════════
 ═══ 📋 READY-TO-PASTE CONTENT (these snippets MUST appear in your HTML) ═══
 ═══════════════════════════════════════════════════════════════════════════════
 The HTML snippets below are PRE-RENDERED. You MUST include every single one in your HTML.
@@ -2207,7 +2232,10 @@ app.post("/api/upload-photo", express.raw({ type: ["image/*"], limit: "8mb" }), 
 // For businesses that only exist on Instagram, WhatsApp, etc.
 app.post("/api/from-scratch", async (req, res) => {
   try {
-    const { name, category, description, phone, address, hours, photo_urls, instagram } = req.body;
+    const {
+      name, category, description, phone, address, hours, photo_urls, instagram,
+      owner_name, years_in_business, services, site_brief,
+    } = req.body;
     if (!name?.trim() || !category?.trim()) {
       return res.status(400).json({ error: "Business name and category are required" });
     }
@@ -2215,10 +2243,30 @@ app.post("/api/from-scratch", async (req, res) => {
     // Normalize Instagram handle — strip URL prefix, leading @, trailing slashes
     let igHandle = (instagram || "").trim();
     if (igHandle) {
-      // Pull just the handle if user pasted a full URL like https://instagram.com/foo/
       const igMatch = igHandle.match(/(?:instagram\.com\/)?@?([a-zA-Z0-9._]+)/);
       igHandle = igMatch ? igMatch[1].replace(/\/+$/, "") : "";
     }
+
+    // Compose a rich description that includes everything the user gave us.
+    // This becomes the seed for Stage 1 (content plan) — the more we feed it, the more
+    // it sticks to the user's wishes rather than inventing.
+    const descParts = [];
+    if (description?.trim()) descParts.push(description.trim());
+    if (owner_name?.trim()) descParts.push(`Owner / Founder: ${owner_name.trim()}`);
+    if (years_in_business) descParts.push(`Years in business: ${years_in_business}`);
+    if (igHandle) descParts.push(`Instagram: @${igHandle}`);
+    if (site_brief?.trim()) {
+      descParts.push(`\n=== SITE BRIEF (special instructions from the business owner — follow these closely) ===\n${site_brief.trim()}`);
+    }
+    if (Array.isArray(services) && services.length > 0) {
+      const svcLines = services
+        .filter(s => s.name?.trim())
+        .map(s => `• ${s.name}${s.price ? ` — ${s.price}` : ""}${s.description ? ` — ${s.description}` : ""}`);
+      if (svcLines.length) {
+        descParts.push(`\n=== SERVICES (use these exact services in the site — do not substitute) ===\n${svcLines.join("\n")}`);
+      }
+    }
+    const fullDescription = descParts.join("\n");
 
     // Build a biz object that matches what shapeBusiness() produces, just from manual input
     const biz = {
@@ -2233,8 +2281,21 @@ app.post("/api/from-scratch", async (req, res) => {
       hours:        Array.isArray(hours) ? hours.filter(Boolean) : [],
       reviews:      [],
       photos:       Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : [],
-      description:  (description || "").trim() + (igHandle ? `\n\nInstagram: @${igHandle}` : ""),
+      description:  fullDescription,
       google_url:   igHandle ? `https://instagram.com/${igHandle}` : null,
+      // Pass user-provided services and metadata through so Stage 1 can use them directly
+      _manual_meta: {
+        owner_name: owner_name?.trim() || "",
+        years_in_business: years_in_business || "",
+        site_brief: site_brief?.trim() || "",
+        services: Array.isArray(services)
+          ? services.filter(s => s.name?.trim()).map(s => ({
+              name: s.name.trim(),
+              price: (s.price || "").trim(),
+              description: (s.description || "").trim(),
+            }))
+          : [],
+      },
     };
 
     const { saved, slug } = await buildAndSaveSite(biz);
