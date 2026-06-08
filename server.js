@@ -619,6 +619,20 @@ async function prefetchPhotos(photoUrls) {
   if (!photoUrls?.length) return [];
 
   const tasks = photoUrls.map(async (proxyUrl) => {
+    // Manual-entry photos are stored locally as /editor-upload/X.
+    // They don't go through the Google photo cache — they're already in our DB.
+    // Just pass them through if the upload row exists.
+    if (proxyUrl.startsWith("/editor-upload/")) {
+      const id = proxyUrl.replace(/^\/editor-upload\//, "").split(/[?#]/)[0];
+      try {
+        const r = await pool.query("SELECT 1 FROM editor_uploads WHERE id=$1 LIMIT 1", [id]);
+        return { url: proxyUrl, ok: r.rows.length > 0 };
+      } catch {
+        return { url: proxyUrl, ok: false };
+      }
+    }
+
+    // Google photos use /photo?ref=X — extract the ref and prefetch.
     const m = proxyUrl.match(/[?&]ref=([^&]+)/);
     if (!m) return { url: proxyUrl, ok: false };
     const ref = decodeURIComponent(m[1]);
@@ -635,7 +649,7 @@ async function prefetchPhotos(photoUrls) {
 
   const results = await Promise.all(tasks);
   const valid = results.filter(r => r.ok).map(r => r.url);
-  console.log(`📸 prefetch: ${valid.length}/${photoUrls.length} photos cached`);
+  console.log(`📸 prefetch: ${valid.length}/${photoUrls.length} photos cached/validated`);
   return valid;
 }
 
@@ -2198,6 +2212,14 @@ app.post("/api/from-scratch", async (req, res) => {
       return res.status(400).json({ error: "Business name and category are required" });
     }
 
+    // Normalize Instagram handle — strip URL prefix, leading @, trailing slashes
+    let igHandle = (instagram || "").trim();
+    if (igHandle) {
+      // Pull just the handle if user pasted a full URL like https://instagram.com/foo/
+      const igMatch = igHandle.match(/(?:instagram\.com\/)?@?([a-zA-Z0-9._]+)/);
+      igHandle = igMatch ? igMatch[1].replace(/\/+$/, "") : "";
+    }
+
     // Build a biz object that matches what shapeBusiness() produces, just from manual input
     const biz = {
       place_id:     `manual-${randomToken(10)}`,  // synthetic so upsert works
@@ -2211,8 +2233,8 @@ app.post("/api/from-scratch", async (req, res) => {
       hours:        Array.isArray(hours) ? hours.filter(Boolean) : [],
       reviews:      [],
       photos:       Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : [],
-      description:  (description || "").trim() + (instagram ? `\n\nInstagram: @${instagram.replace(/^@/, "")}` : ""),
-      google_url:   instagram ? `https://instagram.com/${instagram.replace(/^@/, "")}` : null,
+      description:  (description || "").trim() + (igHandle ? `\n\nInstagram: @${igHandle}` : ""),
+      google_url:   igHandle ? `https://instagram.com/${igHandle}` : null,
     };
 
     const { saved, slug } = await buildAndSaveSite(biz);
